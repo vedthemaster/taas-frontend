@@ -68,6 +68,7 @@ body {
     0 4px 6px -1px rgba(0, 0, 0, 0.3),
     0 2px 4px -2px rgba(0, 0, 0, 0.3),
     inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease, opacity 0.2s ease;
 }
 
 .glass-input {
@@ -236,6 +237,23 @@ body {
 .animate-gradient {
   background-size: 200% 200%;
   animation: gradient-shift 8s ease infinite;
+}
+
+/* View transition for grid/list toggle */
+.view-transition {
+  animation: view-fade 0.2s ease-out;
+}
+
+@keyframes view-fade {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* Floating orbs */

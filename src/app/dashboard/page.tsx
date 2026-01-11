@@ -25,7 +25,9 @@ import {
     FilmStrip,
     MusicNotes,
     FileZip,
-    FileCode
+    FileCode,
+    List,
+    SquaresFour
 } from '@phosphor-icons/react';
 import { useAuthStore, useFolderStore } from '@/lib/store';
 import { fileApi } from '@/lib/api';
@@ -126,6 +128,7 @@ export default function DashboardPage() {
     const [isCreatingFolder, setIsCreatingFolder] = useState(false);
     const [uploadProgress, setUploadProgress] = useState<number | null>(null);
     const [dragOver, setDragOver] = useState(false);
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
     useEffect(() => {
         checkAuth();
@@ -307,6 +310,24 @@ export default function DashboardPage() {
 
                     {/* Actions */}
                     <div className="flex items-center gap-3">
+                        {/* View mode toggle */}
+                        <div className="flex items-center gap-1 p-1 bg-white/5 rounded-lg">
+                            <button
+                                onClick={() => setViewMode('grid')}
+                                className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
+                                title="Grid view"
+                            >
+                                <SquaresFour weight={viewMode === 'grid' ? 'fill' : 'regular'} className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => setViewMode('list')}
+                                className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
+                                title="List view"
+                            >
+                                <List weight={viewMode === 'list' ? 'fill' : 'regular'} className="w-4 h-4" />
+                            </button>
+                        </div>
+
                         <button
                             onClick={() => setShowNewFolderModal(true)}
                             className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
@@ -366,9 +387,9 @@ export default function DashboardPage() {
                                 />
                             </label>
                         </div>
-                    ) : (
-                        <div className="file-grid">
-                            {/* Folders */}
+                    ) : viewMode === 'grid' ? (
+                        <div key="grid" className="file-grid view-transition">
+                            {/* Folders - Grid */}
                             {folders.map((folder: any) => (
                                 <button
                                     key={folder.id}
@@ -396,7 +417,7 @@ export default function DashboardPage() {
                                 </button>
                             ))}
 
-                            {/* Files */}
+                            {/* Files - Grid */}
                             {files.map((file: any) => (
                                 <div
                                     key={file.id}
@@ -425,6 +446,66 @@ export default function DashboardPage() {
                                     </div>
                                     <h4 className="font-medium truncate" title={file.name}>{file.name}</h4>
                                     <p className="text-sm text-gray-500 mt-1">{formatSize(file.size)}</p>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div key="list" className="space-y-1 view-transition">
+                            {/* Folders - List */}
+                            {folders.map((folder: any) => (
+                                <button
+                                    key={folder.id}
+                                    onClick={() => setCurrentFolder(folder.id)}
+                                    className="w-full flex items-center gap-4 p-3 rounded-lg hover:bg-white/5 transition-all group text-left"
+                                >
+                                    <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                                        <Folder weight="duotone" className="w-5 h-5 text-blue-400" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <h4 className="font-medium truncate">{folder.name}</h4>
+                                        <p className="text-xs text-gray-500">{folder._count?.files || 0} files</p>
+                                    </div>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (confirm('Delete this folder?')) deleteFolder(folder.id);
+                                        }}
+                                        className="opacity-0 group-hover:opacity-100 p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-red-400"
+                                    >
+                                        <Trash weight="duotone" className="w-4 h-4" />
+                                    </button>
+                                </button>
+                            ))}
+
+                            {/* Files - List */}
+                            {files.map((file: any) => (
+                                <div
+                                    key={file.id}
+                                    className="flex items-center gap-4 p-3 rounded-lg hover:bg-white/5 transition-all group"
+                                >
+                                    <div className="w-10 h-10 rounded-lg bg-gray-500/20 flex items-center justify-center flex-shrink-0">
+                                        {getFileIcon(file.mimeType)}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <h4 className="font-medium truncate" title={file.name}>{file.name}</h4>
+                                        <p className="text-xs text-gray-500">{formatSize(file.size)}</p>
+                                    </div>
+                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100">
+                                        <button
+                                            onClick={() => handleDownload(file.id, file.name)}
+                                            className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-blue-400"
+                                            title="Download"
+                                        >
+                                            <DownloadSimple weight="duotone" className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeleteFile(file.id)}
+                                            className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-red-400"
+                                            title="Delete"
+                                        >
+                                            <Trash weight="duotone" className="w-4 h-4" />
+                                        </button>
+                                    </div>
                                 </div>
                             ))}
                         </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import {
@@ -10,9 +10,11 @@ import {
     ArrowSquareOut
 } from '@phosphor-icons/react';
 import { telegramApi } from '@/lib/api';
+import { useAuthStore } from '@/lib/store';
 
 export default function SetupPage() {
     const router = useRouter();
+    const { checkAuth, isAuthenticated, isLoading: authLoading, user } = useAuthStore();
 
     const [botToken, setBotToken] = useState('');
     const [channelId, setChannelId] = useState('');
@@ -21,6 +23,30 @@ export default function SetupPage() {
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [step, setStep] = useState<'form' | 'validating' | 'success'>('form');
+
+    useEffect(() => {
+        checkAuth();
+    }, []);
+
+    useEffect(() => {
+        if (!authLoading && !isAuthenticated) {
+            router.push('/');
+        } else if (isAuthenticated && user?.hasTelegramConfig) {
+            router.push('/dashboard');
+        }
+    }, [authLoading, isAuthenticated, user, router]);
+
+    if (authLoading) {
+        return (
+            <div className="min-h-screen bg-gradient-hero flex items-center justify-center">
+                <div className="spinner" />
+            </div>
+        );
+    }
+
+    if (!isAuthenticated) {
+        return null;
+    }
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
