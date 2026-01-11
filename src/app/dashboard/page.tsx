@@ -45,8 +45,8 @@ const getFileIcon = (mimeType: string) => {
 };
 
 // Format file size
-const formatSize = (bytes: string) => {
-    const size = parseInt(bytes);
+const formatSize = (bytes: string | number) => {
+    const size = typeof bytes === 'number' ? bytes : parseInt(bytes);
     if (size < 1024) return `${size} B`;
     if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
     if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
@@ -141,6 +141,23 @@ export default function DashboardPage() {
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
     const [activeUpload, setActiveUpload] = useState<UploadState | null>(null);
     const uploadAbortRef = useRef<boolean>(false);
+
+    // Delete confirmation modal state
+    const [deleteModal, setDeleteModal] = useState<{
+        isOpen: boolean;
+        type: 'file' | 'folder';
+        id: string;
+        name: string;
+    } | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    // Download progress state
+    const [downloadProgress, setDownloadProgress] = useState<{
+        fileName: string;
+        loaded: number;
+        total: number;
+        percent: number;
+    } | null>(null);
 
     useEffect(() => {
         checkAuth();
@@ -308,29 +325,97 @@ export default function DashboardPage() {
         }
     }, [handleFileUpload]);
 
-    const handleDownload = async (fileId: string, fileName: string) => {
+    const handleDownload = async (fileId: string, fileName: string, fileSize: number) => {
         try {
-            const response = await fileApi.download(fileId);
-            const url = window.URL.createObjectURL(new Blob([response.data]));
-            const link = document.createElement('a');
-            link.href = url;
-            link.setAttribute('download', fileName);
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
+            // Use XHR for progress tracking
+            const xhr = new XMLHttpRequest();
+            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+
+            setDownloadProgress({
+                fileName,
+                loaded: 0,
+                total: fileSize,
+                percent: 0,
+            });
+
+            xhr.open('GET', `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/files/${fileId}/download`);
+            if (token) {
+                xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            }
+            xhr.responseType = 'blob';
+
+            xhr.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    const percent = Math.round((event.loaded / event.total) * 100);
+                    setDownloadProgress({
+                        fileName,
+                        loaded: event.loaded,
+                        total: event.total,
+                        percent,
+                    });
+                }
+            };
+
+            xhr.onload = () => {
+                if (xhr.status === 200) {
+                    const blob = xhr.response;
+                    const url = window.URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.setAttribute('download', fileName);
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    window.URL.revokeObjectURL(url);
+                }
+                setDownloadProgress(null);
+            };
+
+            xhr.onerror = () => {
+                console.error('Download failed');
+                setDownloadProgress(null);
+            };
+
+            xhr.send();
         } catch (error) {
             console.error('Failed to download file:', error);
+            setDownloadProgress(null);
         }
     };
 
-    const handleDeleteFile = async (fileId: string) => {
-        if (!confirm('Are you sure you want to delete this file?')) return;
+    // Show delete confirmation modal
+    const showDeleteConfirm = (type: 'file' | 'folder', id: string, name: string) => {
+        setDeleteModal({ isOpen: true, type, id, name });
+    };
+
+    // Cancel delete
+    const cancelDelete = () => {
+        setDeleteModal(null);
+    };
+
+    // Confirm delete
+    const confirmDelete = async () => {
+        if (!deleteModal) return;
+
+        setIsDeleting(true);
         try {
-            await fileApi.delete(fileId);
+            if (deleteModal.type === 'file') {
+                await fileApi.delete(deleteModal.id);
+            } else {
+                await deleteFolder(deleteModal.id);
+            }
             loadFolderContents(currentFolderId || undefined);
+            loadFolderTree();
         } catch (error) {
-            console.error('Failed to delete file:', error);
+            console.error(`Failed to delete ${deleteModal.type}:`, error);
+        } finally {
+            setIsDeleting(false);
+            setDeleteModal(null);
         }
+    };
+
+    const handleDeleteFile = (fileId: string, fileName: string) => {
+        showDeleteConfirm('file', fileId, fileName);
     };
 
     if (authLoading) {
@@ -526,8 +611,8 @@ export default function DashboardPage() {
                         <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
                             <div
                                 className={`h-full transition-all duration-300 ${activeUpload.status === 'complete' ? 'bg-green-500' :
-                                        activeUpload.status === 'error' ? 'bg-red-500' :
-                                            'bg-gradient-to-r from-blue-500 to-purple-500'
+                                    activeUpload.status === 'error' ? 'bg-red-500' :
+                                        'bg-gradient-to-r from-blue-500 to-purple-500'
                                     }`}
                                 style={{ width: `${activeUpload.progress}%` }}
                             />
@@ -581,7 +666,7 @@ export default function DashboardPage() {
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                if (confirm('Delete this folder?')) deleteFolder(folder.id);
+                                                showDeleteConfirm('folder', folder.id, folder.name);
                                             }}
                                             className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-red-400"
                                         >
@@ -607,14 +692,14 @@ export default function DashboardPage() {
                                         </div>
                                         <div className="flex gap-1 opacity-0 group-hover:opacity-100">
                                             <button
-                                                onClick={() => handleDownload(file.id, file.name)}
+                                                onClick={() => handleDownload(file.id, file.name, file.size)}
                                                 className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-blue-400"
                                                 title="Download"
                                             >
                                                 <DownloadSimple weight="duotone" className="w-4 h-4" />
                                             </button>
                                             <button
-                                                onClick={() => handleDeleteFile(file.id)}
+                                                onClick={() => handleDeleteFile(file.id, file.name)}
                                                 className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-red-400"
                                                 title="Delete"
                                             >
@@ -646,7 +731,7 @@ export default function DashboardPage() {
                                     <button
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            if (confirm('Delete this folder?')) deleteFolder(folder.id);
+                                            showDeleteConfirm('folder', folder.id, folder.name);
                                         }}
                                         className="opacity-0 group-hover:opacity-100 p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-red-400"
                                     >
@@ -670,14 +755,14 @@ export default function DashboardPage() {
                                     </div>
                                     <div className="flex gap-1 opacity-0 group-hover:opacity-100">
                                         <button
-                                            onClick={() => handleDownload(file.id, file.name)}
+                                            onClick={() => handleDownload(file.id, file.name, file.size)}
                                             className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-blue-400"
                                             title="Download"
                                         >
                                             <DownloadSimple weight="duotone" className="w-4 h-4" />
                                         </button>
                                         <button
-                                            onClick={() => handleDeleteFile(file.id)}
+                                            onClick={() => handleDeleteFile(file.id, file.name)}
                                             className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-red-400"
                                             title="Delete"
                                         >
@@ -743,6 +828,87 @@ export default function DashboardPage() {
                     <div className="text-center">
                         <Upload weight="duotone" className="w-16 h-16 text-blue-400 mx-auto mb-4" />
                         <p className="text-xl font-medium">Drop files to upload</p>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {deleteModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="glass-card p-6 max-w-md w-full mx-4 animate-in fade-in zoom-in duration-200">
+                        <div className="flex items-start gap-4 mb-6">
+                            <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                                <Trash weight="duotone" className="w-6 h-6 text-red-400" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-white mb-1">
+                                    Delete {deleteModal.type}?
+                                </h3>
+                                <p className="text-gray-400 text-sm">
+                                    Are you sure you want to delete <span className="text-white font-medium">"{deleteModal.name}"</span>?
+                                    This action cannot be undone.
+                                </p>
+                            </div>
+                        </div>
+                        <div className="flex gap-3 justify-end">
+                            <button
+                                onClick={cancelDelete}
+                                disabled={isDeleting}
+                                className="px-4 py-2 rounded-lg border border-white/10 text-gray-300 hover:bg-white/5 transition-colors disabled:opacity-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmDelete}
+                                disabled={isDeleting}
+                                className="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                            >
+                                {isDeleting ? (
+                                    <>
+                                        <SpinnerGap weight="bold" className="w-4 h-4 animate-spin" />
+                                        Deleting...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Trash weight="bold" className="w-4 h-4" />
+                                        Delete
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Download Progress Modal */}
+            {downloadProgress && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+                    <div className="glass-card p-6 max-w-md w-full mx-4">
+                        <div className="flex items-center gap-4 mb-4">
+                            <div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                                <DownloadSimple weight="duotone" className="w-6 h-6 text-blue-400 animate-bounce" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <h3 className="text-lg font-semibold text-white">Downloading...</h3>
+                                <p className="text-gray-400 text-sm truncate" title={downloadProgress.fileName}>
+                                    {downloadProgress.fileName}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="flex justify-between text-sm">
+                                <span className="text-gray-400">
+                                    {formatSize(downloadProgress.loaded)} / {formatSize(downloadProgress.total)}
+                                </span>
+                                <span className="text-blue-400 font-medium">{downloadProgress.percent}%</span>
+                            </div>
+                            <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+                                <div
+                                    className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-300"
+                                    style={{ width: `${downloadProgress.percent}%` }}
+                                />
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
