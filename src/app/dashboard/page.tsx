@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import NextImage from 'next/image';
 import {
@@ -30,7 +30,7 @@ import {
     SquaresFour
 } from '@phosphor-icons/react';
 import { useAuthStore, useFolderStore } from '@/lib/store';
-import { fileApi } from '@/lib/api';
+import { fileApi, chunkedUploadApi, splitFileIntoChunks, CHUNK_THRESHOLD } from '@/lib/api';
 
 // File icon helper
 const getFileIcon = (mimeType: string) => {
@@ -123,12 +123,24 @@ export default function DashboardPage() {
         deleteFolder
     } = useFolderStore();
 
+    // Upload state
+    interface UploadState {
+        fileName: string;
+        progress: number;
+        uploadedBytes: number;
+        totalBytes: number;
+        status: 'uploading' | 'complete' | 'error';
+        uploadId?: string;
+    }
+
     const [showNewFolderModal, setShowNewFolderModal] = useState(false);
     const [newFolderName, setNewFolderName] = useState('');
     const [isCreatingFolder, setIsCreatingFolder] = useState(false);
     const [uploadProgress, setUploadProgress] = useState<number | null>(null);
     const [dragOver, setDragOver] = useState(false);
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+    const [activeUpload, setActiveUpload] = useState<UploadState | null>(null);
+    const uploadAbortRef = useRef<boolean>(false);
 
     useEffect(() => {
         checkAuth();
@@ -169,14 +181,122 @@ export default function DashboardPage() {
         const file = fileList[0];
         if (!file) return;
 
-        setUploadProgress(0);
-        try {
-            await fileApi.upload(file, currentFolderId || undefined);
-            loadFolderContents(currentFolderId || undefined);
-            setUploadProgress(null);
-        } catch (error) {
-            console.error('Failed to upload file:', error);
-            setUploadProgress(null);
+        uploadAbortRef.current = false;
+
+        // Check if file needs chunked upload
+        if (file.size > CHUNK_THRESHOLD) {
+            // Chunked upload
+            setActiveUpload({
+                fileName: file.name,
+                progress: 0,
+                uploadedBytes: 0,
+                totalBytes: file.size,
+                status: 'uploading',
+            });
+
+            try {
+                // Initialize upload
+                const initRes = await chunkedUploadApi.initUpload(
+                    file.name,
+                    file.size,
+                    file.type || 'application/octet-stream',
+                    currentFolderId || undefined
+                );
+
+                const { uploadId, totalChunks } = initRes.data;
+                setActiveUpload(prev => prev ? { ...prev, uploadId } : null);
+
+                // Split file into chunks
+                const chunks = splitFileIntoChunks(file);
+                let completedChunks = 0;
+                let uploadedBytes = 0;
+
+                // Upload chunks with rate limiting (max 3 concurrent)
+                const MAX_CONCURRENT = 3;
+                const chunkQueue = [...chunks.map((chunk, index) => ({ chunk, index }))];
+                const activeUploads: Promise<void>[] = [];
+
+                const uploadNextChunk = async () => {
+                    if (uploadAbortRef.current) return;
+
+                    const item = chunkQueue.shift();
+                    if (!item) return;
+
+                    const { chunk, index } = item;
+
+                    await chunkedUploadApi.uploadChunk(
+                        uploadId,
+                        chunk,
+                        index,
+                        (loaded, total) => {
+                            // Calculate overall progress
+                            const chunkProgress = loaded / total;
+                            const overallBytes = uploadedBytes + (chunk.size * chunkProgress);
+                            const overallProgress = Math.round((overallBytes / file.size) * 100);
+
+                            setActiveUpload(prev => prev ? {
+                                ...prev,
+                                progress: overallProgress,
+                                uploadedBytes: Math.round(overallBytes),
+                            } : null);
+                        }
+                    );
+
+                    completedChunks++;
+                    uploadedBytes += chunk.size;
+
+                    // Update progress
+                    setActiveUpload(prev => prev ? {
+                        ...prev,
+                        progress: Math.round((completedChunks / totalChunks) * 100),
+                        uploadedBytes,
+                    } : null);
+
+                    // Upload next chunk
+                    await uploadNextChunk();
+                };
+
+                // Start initial concurrent uploads
+                for (let i = 0; i < Math.min(MAX_CONCURRENT, chunks.length); i++) {
+                    activeUploads.push(uploadNextChunk());
+                }
+
+                // Wait for all uploads to complete
+                await Promise.all(activeUploads);
+
+                if (uploadAbortRef.current) {
+                    await chunkedUploadApi.cancelUpload(uploadId);
+                    setActiveUpload(null);
+                    return;
+                }
+
+                // Complete upload
+                await chunkedUploadApi.completeUpload(uploadId);
+
+                setActiveUpload(prev => prev ? { ...prev, status: 'complete', progress: 100 } : null);
+
+                // Refresh folder contents
+                loadFolderContents(currentFolderId || undefined);
+
+                // Clear after showing completion
+                setTimeout(() => setActiveUpload(null), 2000);
+
+            } catch (error) {
+                console.error('Chunked upload failed:', error);
+                setActiveUpload(prev => prev ? { ...prev, status: 'error' } : null);
+                setTimeout(() => setActiveUpload(null), 3000);
+            }
+        } else {
+            // Standard upload for small files
+            setUploadProgress(0);
+            try {
+                await fileApi.upload(file, currentFolderId || undefined);
+                loadFolderContents(currentFolderId || undefined);
+                setUploadProgress(null);
+            } catch (error) {
+                console.error('Failed to upload file:', error);
+                setUploadProgress(null);
+            }
         }
     }, [currentFolderId, loadFolderContents]);
 
@@ -347,12 +467,70 @@ export default function DashboardPage() {
                     </div>
                 </header>
 
-                {/* Upload progress */}
-                {uploadProgress !== null && (
+                {/* Upload progress - Standard */}
+                {uploadProgress !== null && !activeUpload && (
                     <div className="px-6 py-3 bg-blue-500/10 border-b border-blue-500/20">
                         <div className="flex items-center gap-3">
                             <SpinnerGap weight="bold" className="w-5 h-5 text-blue-400 animate-spin" />
                             <span className="text-sm text-blue-200">Uploading file...</span>
+                        </div>
+                    </div>
+                )}
+
+                {/* Upload progress - Chunked */}
+                {activeUpload && (
+                    <div className="px-6 py-4 bg-gradient-to-r from-blue-500/10 to-purple-500/10 border-b border-blue-500/20">
+                        <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-3">
+                                {activeUpload.status === 'uploading' && (
+                                    <SpinnerGap weight="bold" className="w-5 h-5 text-blue-400 animate-spin" />
+                                )}
+                                {activeUpload.status === 'complete' && (
+                                    <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center">
+                                        <span className="text-white text-xs">✓</span>
+                                    </div>
+                                )}
+                                {activeUpload.status === 'error' && (
+                                    <div className="w-5 h-5 rounded-full bg-red-500 flex items-center justify-center">
+                                        <span className="text-white text-xs">✕</span>
+                                    </div>
+                                )}
+                                <div>
+                                    <p className="text-sm font-medium text-white truncate max-w-xs">
+                                        {activeUpload.fileName}
+                                    </p>
+                                    <p className="text-xs text-gray-400">
+                                        {formatSize(activeUpload.uploadedBytes.toString())} / {formatSize(activeUpload.totalBytes.toString())}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <span className="text-sm font-medium text-blue-300">
+                                    {activeUpload.progress}%
+                                </span>
+                                {activeUpload.status === 'uploading' && (
+                                    <button
+                                        onClick={() => {
+                                            uploadAbortRef.current = true;
+                                            setActiveUpload(null);
+                                        }}
+                                        className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-red-400"
+                                        title="Cancel upload"
+                                    >
+                                        <X weight="bold" className="w-4 h-4" />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                        {/* Progress bar */}
+                        <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                            <div
+                                className={`h-full transition-all duration-300 ${activeUpload.status === 'complete' ? 'bg-green-500' :
+                                        activeUpload.status === 'error' ? 'bg-red-500' :
+                                            'bg-gradient-to-r from-blue-500 to-purple-500'
+                                    }`}
+                                style={{ width: `${activeUpload.progress}%` }}
+                            />
                         </div>
                     </div>
                 )}
