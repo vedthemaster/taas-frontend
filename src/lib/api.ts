@@ -98,7 +98,7 @@ export const fileApi = {
 };
 
 // Chunked upload constants
-export const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
+export const CHUNK_SIZE = 32 * 1024 * 1024; // 32 MB
 export const CHUNK_THRESHOLD = 100 * 1024 * 1024; // 100 MB
 
 // Chunked upload API
