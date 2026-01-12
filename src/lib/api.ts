@@ -45,15 +45,29 @@ export const authApi = {
     getMe: () => api.get('/auth/me'),
 };
 
-// Telegram API
+// Telegram API (legacy - for backward compatibility)
 export const telegramApi = {
-    setup: (botToken: string, channelId: string, apiId: string, apiHash: string) =>
-        api.post('/telegram/setup', { botToken, channelId, apiId, apiHash }),
+    setup: (botToken: string, channelId: string) =>
+        api.post('/bots', { botToken, channelId }),
 
-    getStatus: () => api.get('/telegram/status'),
+    getStatus: () => api.get('/bots'),
 
-    validate: () => api.post('/telegram/validate'),
+    validate: () => api.get('/bots'),
 };
+
+// Bot Management API
+export const botApi = {
+    getAll: () => api.get('/bots'),
+
+    add: (botToken: string, channelId?: string) =>
+        api.post('/bots', { botToken, channelId }),
+
+    remove: (botId: string) => api.delete(`/bots/${botId}`),
+
+    updateChannel: (channelId: string) =>
+        api.put('/bots/channel', { channelId }),
+};
+
 
 // Folder API
 export const folderApi = {
@@ -98,8 +112,8 @@ export const fileApi = {
 };
 
 // Chunked upload constants
-export const CHUNK_SIZE = 32 * 1024 * 1024; // 32 MB
-export const CHUNK_THRESHOLD = 100 * 1024 * 1024; // 100 MB
+export const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
+export const CHUNK_THRESHOLD = 16 * 1024 * 1024; // 16 MB - all files >16MB get chunked
 
 // Chunked upload API
 export const chunkedUploadApi = {

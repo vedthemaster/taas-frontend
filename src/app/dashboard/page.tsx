@@ -30,7 +30,7 @@ import {
     SquaresFour
 } from '@phosphor-icons/react';
 import { useAuthStore, useFolderStore } from '@/lib/store';
-import { fileApi, chunkedUploadApi, splitFileIntoChunks, CHUNK_THRESHOLD } from '@/lib/api';
+import { fileApi, chunkedUploadApi, splitFileIntoChunks, CHUNK_THRESHOLD, botApi } from '@/lib/api';
 
 // File icon helper
 const getFileIcon = (mimeType: string) => {
@@ -142,6 +142,11 @@ export default function DashboardPage() {
     const [activeUpload, setActiveUpload] = useState<UploadState | null>(null);
     const uploadAbortRef = useRef<boolean>(false);
 
+    // Upload queue for multiple files
+    const [uploadQueue, setUploadQueue] = useState<File[]>([]);
+    const isUploadingRef = useRef(false);
+    const processedFilesRef = useRef<Set<string>>(new Set());
+
     // Delete confirmation modal state
     const [deleteModal, setDeleteModal] = useState<{
         isOpen: boolean;
@@ -158,6 +163,81 @@ export default function DashboardPage() {
         total: number;
         percent: number;
     } | null>(null);
+
+    // Download queue
+    const [downloadQueue, setDownloadQueue] = useState<Array<{ id: string; name: string; size: number }>>([]);
+    const isDownloadingRef = useRef(false);
+    const downloadQueueRef = useRef<Array<{ id: string; name: string; size: number }>>([]);
+    const processedDownloadsRef = useRef<Set<string>>(new Set());
+
+    // Multi-select state
+    const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+    const [isSelectionMode, setIsSelectionMode] = useState(false);
+    const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false);
+    const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+
+    // Bot management state
+    const [showBotModal, setShowBotModal] = useState(false);
+    const [bots, setBots] = useState<Array<{ id: string; username: string | null; isActive: boolean }>>([]);
+    const [channelId, setChannelId] = useState('');
+    const [newBotToken, setNewBotToken] = useState('');
+    const [newChannelId, setNewChannelId] = useState('');
+    const [isAddingBot, setIsAddingBot] = useState(false);
+    const [botError, setBotError] = useState('');
+
+    // Load bots for management
+    const loadBots = useCallback(async () => {
+        try {
+            const response = await botApi.getAll();
+            setBots(response.data.bots || []);
+            setChannelId(response.data.channelId || '');
+            setNewChannelId(response.data.channelId || '');
+        } catch (error) {
+            console.error('Failed to load bots:', error);
+        }
+    }, []);
+
+    // Add a new bot
+    const handleAddBot = async () => {
+        if (!newBotToken.trim()) {
+            setBotError('Bot token is required');
+            return;
+        }
+
+        setIsAddingBot(true);
+        setBotError('');
+
+        try {
+            await botApi.add(newBotToken.trim(), bots.length === 0 ? newChannelId : undefined);
+            setNewBotToken('');
+            await loadBots();
+        } catch (error: any) {
+            setBotError(error.response?.data?.error || 'Failed to add bot');
+        } finally {
+            setIsAddingBot(false);
+        }
+    };
+
+    // Remove a bot
+    const handleRemoveBot = async (botId: string) => {
+        try {
+            await botApi.remove(botId);
+            await loadBots();
+        } catch (error) {
+            console.error('Failed to remove bot:', error);
+        }
+    };
+
+    // Update channel ID
+    const handleUpdateChannel = async () => {
+        if (!newChannelId.trim()) return;
+        try {
+            await botApi.updateChannel(newChannelId.trim());
+            setChannelId(newChannelId);
+        } catch (error) {
+            console.error('Failed to update channel:', error);
+        }
+    };
 
     useEffect(() => {
         checkAuth();
@@ -194,9 +274,12 @@ export default function DashboardPage() {
         }
     };
 
-    const handleFileUpload = useCallback(async (fileList: FileList) => {
-        const file = fileList[0];
-        if (!file) return;
+    // Process a single file upload
+    const processFileUpload = useCallback(async (file: File) => {
+        if (!file) {
+            isUploadingRef.current = false;
+            return;
+        }
 
         uploadAbortRef.current = false;
 
@@ -284,6 +367,7 @@ export default function DashboardPage() {
                 if (uploadAbortRef.current) {
                     await chunkedUploadApi.cancelUpload(uploadId);
                     setActiveUpload(null);
+                    processNextFromQueue();
                     return;
                 }
 
@@ -292,30 +376,93 @@ export default function DashboardPage() {
 
                 setActiveUpload(prev => prev ? { ...prev, status: 'complete', progress: 100 } : null);
 
-                // Refresh folder contents
-                loadFolderContents(currentFolderId || undefined);
-
-                // Clear after showing completion
-                setTimeout(() => setActiveUpload(null), 2000);
+                // Clear after showing completion, then process next
+                setTimeout(() => {
+                    setActiveUpload(null);
+                    processNextFromQueue();
+                }, 1000);
 
             } catch (error) {
                 console.error('Chunked upload failed:', error);
                 setActiveUpload(prev => prev ? { ...prev, status: 'error' } : null);
-                setTimeout(() => setActiveUpload(null), 3000);
+                setTimeout(() => {
+                    setActiveUpload(null);
+                    processNextFromQueue();
+                }, 2000);
             }
         } else {
             // Standard upload for small files
-            setUploadProgress(0);
+            setActiveUpload({
+                fileName: file.name,
+                progress: 0,
+                uploadedBytes: 0,
+                totalBytes: file.size,
+                status: 'uploading',
+            });
             try {
                 await fileApi.upload(file, currentFolderId || undefined);
-                loadFolderContents(currentFolderId || undefined);
-                setUploadProgress(null);
+                setActiveUpload(prev => prev ? { ...prev, status: 'complete', progress: 100 } : null);
+                setTimeout(() => {
+                    setActiveUpload(null);
+                    processNextFromQueue();
+                }, 800);
             } catch (error) {
                 console.error('Failed to upload file:', error);
-                setUploadProgress(null);
+                setActiveUpload(prev => prev ? { ...prev, status: 'error' } : null);
+                setTimeout(() => {
+                    setActiveUpload(null);
+                    processNextFromQueue();
+                }, 2000);
             }
         }
     }, [currentFolderId, loadFolderContents]);
+
+    // Ref-based queue to avoid React state issues
+    const uploadQueueRef = useRef<File[]>([]);
+
+    // Process next file from ref-based queue
+    const processNextFromQueue = useCallback(() => {
+        if (uploadQueueRef.current.length > 0) {
+            const next = uploadQueueRef.current.shift()!;
+            setUploadQueue([...uploadQueueRef.current]); // Sync state for UI
+            processFileUpload(next);
+        } else {
+            isUploadingRef.current = false;
+            processedFilesRef.current.clear();
+            loadFolderContents(currentFolderId || undefined);
+            setUploadQueue([]);
+        }
+    }, [processFileUpload, currentFolderId, loadFolderContents]);
+
+    // Handle multiple files - queue them up
+    const handleFileUpload = useCallback((fileList: FileList) => {
+        const files = Array.from(fileList);
+        if (files.length === 0) return;
+
+        // Create unique keys for files and filter out already processed ones
+        const getFileKey = (f: File) => `${f.name}-${f.size}-${f.lastModified}`;
+        const newFiles = files.filter(f => {
+            const key = getFileKey(f);
+            if (processedFilesRef.current.has(key)) {
+                console.log('Skipping duplicate:', f.name);
+                return false; // Skip duplicate
+            }
+            processedFilesRef.current.add(key);
+            return true;
+        });
+
+        if (newFiles.length === 0) return;
+
+        // Add to ref-based queue
+        uploadQueueRef.current.push(...newFiles);
+        setUploadQueue([...uploadQueueRef.current]); // Sync state for UI
+
+        // If not currently uploading, start processing
+        if (!isUploadingRef.current) {
+            isUploadingRef.current = true;
+            processNextFromQueue();
+        }
+    }, [processNextFromQueue]);
 
     const handleDrop = useCallback((e: React.DragEvent) => {
         e.preventDefault();
@@ -325,9 +472,22 @@ export default function DashboardPage() {
         }
     }, [handleFileUpload]);
 
-    const handleDownload = async (fileId: string, fileName: string, fileSize: number) => {
+    // Process next download from ref-based queue
+    const processNextDownload = () => {
+        if (downloadQueueRef.current.length > 0) {
+            const next = downloadQueueRef.current.shift()!;
+            setDownloadQueue([...downloadQueueRef.current]); // Sync state for UI
+            executeDownload(next.id, next.name, next.size);
+        } else {
+            isDownloadingRef.current = false;
+            processedDownloadsRef.current.clear();
+            setDownloadQueue([]);
+        }
+    };
+
+    // Execute actual download
+    const executeDownload = (fileId: string, fileName: string, fileSize: number) => {
         try {
-            // Use XHR for progress tracking
             const xhr = new XMLHttpRequest();
             const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
 
@@ -369,17 +529,102 @@ export default function DashboardPage() {
                     window.URL.revokeObjectURL(url);
                 }
                 setDownloadProgress(null);
+                processNextDownload();
             };
 
             xhr.onerror = () => {
                 console.error('Download failed');
                 setDownloadProgress(null);
+                processNextDownload();
             };
 
             xhr.send();
         } catch (error) {
             console.error('Failed to download file:', error);
             setDownloadProgress(null);
+            processNextDownload();
+        }
+    };
+
+    // Queue a file for download
+    const handleDownload = (fileId: string, fileName: string, fileSize: number) => {
+        // Check for duplicate
+        if (processedDownloadsRef.current.has(fileId)) {
+            console.log('Skipping duplicate download:', fileName);
+            return;
+        }
+        processedDownloadsRef.current.add(fileId);
+
+        // Add to ref-based queue
+        downloadQueueRef.current.push({ id: fileId, name: fileName, size: fileSize });
+        setDownloadQueue([...downloadQueueRef.current]); // Sync state for UI
+
+        // If not currently downloading, start processing
+        if (!isDownloadingRef.current) {
+            isDownloadingRef.current = true;
+            processNextDownload();
+        }
+    };
+
+    // Toggle file selection
+    const toggleFileSelection = (fileId: string) => {
+        setSelectedFiles(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(fileId)) {
+                newSet.delete(fileId);
+            } else {
+                newSet.add(fileId);
+            }
+            // Auto-enable selection mode if files selected
+            if (newSet.size > 0) {
+                setIsSelectionMode(true);
+            }
+            return newSet;
+        });
+    };
+
+    // Select all files
+    const selectAllFiles = () => {
+        const allFileIds = files.map((f: any) => f.id);
+        setSelectedFiles(new Set(allFileIds));
+        setIsSelectionMode(true);
+    };
+
+    // Clear selection
+    const clearSelection = () => {
+        setSelectedFiles(new Set());
+        setIsSelectionMode(false);
+    };
+
+    // Bulk download selected files
+    const handleBulkDownload = () => {
+        const selectedFilesList = files.filter((f: any) => selectedFiles.has(f.id));
+        selectedFilesList.forEach((file: any) => {
+            handleDownload(file.id, file.name, Number(file.size));
+        });
+        clearSelection();
+    };
+
+    // Bulk delete selected files
+    const handleBulkDelete = () => {
+        if (selectedFiles.size === 0) return;
+        setShowBulkDeleteModal(true);
+    };
+
+    // Confirm bulk delete
+    const confirmBulkDelete = async () => {
+        setIsBulkDeleting(true);
+        try {
+            for (const fileId of selectedFiles) {
+                await fileApi.delete(fileId);
+            }
+            loadFolderContents(currentFolderId || undefined);
+            clearSelection();
+        } catch (error) {
+            console.error('Failed to delete files:', error);
+        } finally {
+            setIsBulkDeleting(false);
+            setShowBulkDeleteModal(false);
         }
     };
 
@@ -478,6 +723,13 @@ export default function DashboardPage() {
                             <p className="text-sm truncate">{user?.email}</p>
                         </div>
                         <button
+                            onClick={() => { setShowBotModal(true); loadBots(); }}
+                            className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white"
+                            title="Bot Settings"
+                        >
+                            <Gear weight="duotone" className="w-4 h-4" />
+                        </button>
+                        <button
                             onClick={handleLogout}
                             className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white"
                             title="Log out"
@@ -545,12 +797,53 @@ export default function DashboardPage() {
                             Upload
                             <input
                                 type="file"
+                                multiple
                                 className="hidden"
                                 onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
                             />
                         </label>
                     </div>
                 </header>
+
+                {/* Selection toolbar */}
+                {isSelectionMode && (
+                    <div className="px-6 py-3 bg-gradient-to-r from-blue-500/20 to-purple-500/20 border-b border-blue-500/30 flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                            <span className="text-sm font-medium text-white">
+                                {selectedFiles.size} file(s) selected
+                            </span>
+                            <button
+                                onClick={selectAllFiles}
+                                className="text-sm text-blue-300 hover:text-blue-200"
+                            >
+                                Select All ({files.length})
+                            </button>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={handleBulkDownload}
+                                className="flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium transition-colors"
+                            >
+                                <DownloadSimple weight="bold" className="w-4 h-4" />
+                                Download
+                            </button>
+                            <button
+                                onClick={handleBulkDelete}
+                                className="flex items-center gap-2 px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-sm font-medium transition-colors"
+                            >
+                                <Trash weight="bold" className="w-4 h-4" />
+                                Delete
+                            </button>
+                            <button
+                                onClick={clearSelection}
+                                className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg text-sm font-medium transition-colors"
+                            >
+                                <X weight="bold" className="w-4 h-4" />
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 {/* Upload progress - Standard */}
                 {uploadProgress !== null && !activeUpload && (
@@ -586,6 +879,9 @@ export default function DashboardPage() {
                                     </p>
                                     <p className="text-xs text-gray-400">
                                         {formatSize(activeUpload.uploadedBytes.toString())} / {formatSize(activeUpload.totalBytes.toString())}
+                                        {uploadQueue.length > 0 && (
+                                            <span className="ml-2 text-cyan-400">• {uploadQueue.length} more in queue</span>
+                                        )}
                                     </p>
                                 </div>
                             </div>
@@ -684,22 +980,46 @@ export default function DashboardPage() {
                             {files.map((file: any) => (
                                 <div
                                     key={file.id}
-                                    className="glass-card p-4 hover:border-blue-500/50 transition-all group"
+                                    className={`glass-card p-4 hover:border-blue-500/50 transition-all group relative ${selectedFiles.has(file.id) ? 'border-blue-500 bg-blue-500/10' : ''
+                                        }`}
+                                    onClick={() => isSelectionMode && toggleFileSelection(file.id)}
                                 >
+                                    {/* Selection checkbox */}
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleFileSelection(file.id);
+                                        }}
+                                        className={`absolute top-2 left-2 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${selectedFiles.has(file.id)
+                                            ? 'bg-blue-500 border-blue-500'
+                                            : 'border-gray-500 hover:border-blue-400 opacity-0 group-hover:opacity-100'
+                                            } ${selectedFiles.has(file.id) ? 'opacity-100' : ''}`}
+                                    >
+                                        {selectedFiles.has(file.id) && (
+                                            <span className="text-white text-xs font-bold">✓</span>
+                                        )}
+                                    </button>
+
                                     <div className="flex items-start justify-between mb-3">
                                         <div className="w-12 h-12 rounded-xl bg-gray-500/20 flex items-center justify-center">
                                             {getFileIcon(file.mimeType)}
                                         </div>
                                         <div className="flex gap-1 opacity-0 group-hover:opacity-100">
                                             <button
-                                                onClick={() => handleDownload(file.id, file.name, file.size)}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleDownload(file.id, file.name, file.size);
+                                                }}
                                                 className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-blue-400"
                                                 title="Download"
                                             >
                                                 <DownloadSimple weight="duotone" className="w-4 h-4" />
                                             </button>
                                             <button
-                                                onClick={() => handleDeleteFile(file.id, file.name)}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleDeleteFile(file.id, file.name);
+                                                }}
                                                 className="p-1.5 rounded-lg hover:bg-white/10 text-gray-400 hover:text-red-400"
                                                 title="Delete"
                                             >
@@ -744,8 +1064,26 @@ export default function DashboardPage() {
                             {files.map((file: any) => (
                                 <div
                                     key={file.id}
-                                    className="flex items-center gap-4 p-3 rounded-lg hover:bg-white/5 transition-all group"
+                                    className={`flex items-center gap-4 p-3 rounded-lg hover:bg-white/5 transition-all group ${selectedFiles.has(file.id) ? 'bg-blue-500/10' : ''
+                                        }`}
+                                    onClick={() => isSelectionMode && toggleFileSelection(file.id)}
                                 >
+                                    {/* Selection checkbox */}
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleFileSelection(file.id);
+                                        }}
+                                        className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${selectedFiles.has(file.id)
+                                            ? 'bg-blue-500 border-blue-500 opacity-100'
+                                            : 'border-gray-500 hover:border-blue-400 opacity-0 group-hover:opacity-100'
+                                            } ${selectedFiles.has(file.id) ? 'opacity-100' : ''}`}
+                                    >
+                                        {selectedFiles.has(file.id) && (
+                                            <span className="text-white text-xs font-bold">✓</span>
+                                        )}
+                                    </button>
+
                                     <div className="w-10 h-10 rounded-lg bg-gray-500/20 flex items-center justify-center flex-shrink-0">
                                         {getFileIcon(file.mimeType)}
                                     </div>
@@ -755,14 +1093,20 @@ export default function DashboardPage() {
                                     </div>
                                     <div className="flex gap-1 opacity-0 group-hover:opacity-100">
                                         <button
-                                            onClick={() => handleDownload(file.id, file.name, file.size)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDownload(file.id, file.name, file.size);
+                                            }}
                                             className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-blue-400"
                                             title="Download"
                                         >
                                             <DownloadSimple weight="duotone" className="w-4 h-4" />
                                         </button>
                                         <button
-                                            onClick={() => handleDeleteFile(file.id, file.name)}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDeleteFile(file.id, file.name);
+                                            }}
                                             className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-red-400"
                                             title="Delete"
                                         >
@@ -880,34 +1224,185 @@ export default function DashboardPage() {
                 </div>
             )}
 
-            {/* Download Progress Modal */}
-            {downloadProgress && (
+            {/* Bulk Delete Confirmation Modal */}
+            {showBulkDeleteModal && (
                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-                    <div className="glass-card p-6 max-w-md w-full mx-4">
-                        <div className="flex items-center gap-4 mb-4">
-                            <div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
-                                <DownloadSimple weight="duotone" className="w-6 h-6 text-blue-400 animate-bounce" />
+                    <div className="glass-card p-6 max-w-md w-full mx-4 animate-in fade-in zoom-in duration-200">
+                        <div className="flex items-start gap-4 mb-6">
+                            <div className="w-12 h-12 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                                <Trash weight="duotone" className="w-6 h-6 text-red-400" />
                             </div>
-                            <div className="flex-1 min-w-0">
-                                <h3 className="text-lg font-semibold text-white">Downloading...</h3>
-                                <p className="text-gray-400 text-sm truncate" title={downloadProgress.fileName}>
-                                    {downloadProgress.fileName}
+                            <div>
+                                <h3 className="text-lg font-semibold text-white mb-1">
+                                    Delete {selectedFiles.size} files?
+                                </h3>
+                                <p className="text-gray-400 text-sm">
+                                    This will permanently delete the selected files. This action cannot be undone.
                                 </p>
                             </div>
                         </div>
-                        <div className="space-y-2">
-                            <div className="flex justify-between text-sm">
-                                <span className="text-gray-400">
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => setShowBulkDeleteModal(false)}
+                                disabled={isBulkDeleting}
+                                className="btn-secondary text-sm py-2 px-4"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmBulkDelete}
+                                disabled={isBulkDeleting}
+                                className="bg-red-600 hover:bg-red-500 text-white text-sm py-2 px-4 rounded-lg font-medium flex items-center gap-2 disabled:opacity-50"
+                            >
+                                {isBulkDeleting ? (
+                                    <>
+                                        <SpinnerGap weight="bold" className="w-4 h-4 animate-spin" />
+                                        Deleting...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Trash weight="bold" className="w-4 h-4" />
+                                        Delete All
+                                    </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Download Progress Toast (non-blocking) */}
+            {downloadProgress && (
+                <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
+                    <div className="bg-gradient-to-br from-gray-900 to-gray-950 border border-white/10 rounded-xl p-4 shadow-2xl min-w-[300px] max-w-[400px]">
+                        <div className="flex items-center gap-3 mb-3">
+                            <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                                <DownloadSimple weight="duotone" className="w-5 h-5 text-blue-400 animate-bounce" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-white truncate" title={downloadProgress.fileName}>
+                                    {downloadProgress.fileName}
+                                </p>
+                                <p className="text-xs text-gray-400">
                                     {formatSize(downloadProgress.loaded)} / {formatSize(downloadProgress.total)}
-                                </span>
-                                <span className="text-blue-400 font-medium">{downloadProgress.percent}%</span>
+                                    {downloadQueue.length > 0 && (
+                                        <span className="ml-2 text-cyan-400">• {downloadQueue.length} in queue</span>
+                                    )}
+                                </p>
                             </div>
-                            <div className="h-2 bg-white/10 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-300"
-                                    style={{ width: `${downloadProgress.percent}%` }}
+                            <span className="text-sm font-bold text-blue-400">{downloadProgress.percent}%</span>
+                        </div>
+                        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                            <div
+                                className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-300"
+                                style={{ width: `${downloadProgress.percent}%` }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Bot Management Modal */}
+            {showBotModal && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-gradient-to-b from-gray-900 to-gray-950 border border-white/10 rounded-2xl p-6 max-w-md w-full shadow-2xl">
+                        <div className="flex items-center justify-between mb-6">
+                            <h2 className="text-xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">
+                                Bot Settings
+                            </h2>
+                            <button
+                                onClick={() => setShowBotModal(false)}
+                                className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white"
+                            >
+                                <X weight="bold" className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        {/* Channel ID */}
+                        <div className="mb-6">
+                            <label className="block text-sm font-medium text-gray-300 mb-2">Channel ID</label>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={newChannelId}
+                                    onChange={(e) => setNewChannelId(e.target.value)}
+                                    placeholder="-100xxxxxxxxxx"
+                                    className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
                                 />
+                                {channelId !== newChannelId && (
+                                    <button
+                                        onClick={handleUpdateChannel}
+                                        className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-colors"
+                                    >
+                                        Save
+                                    </button>
+                                )}
                             </div>
+                        </div>
+
+                        {/* Add Bot */}
+                        <div className="mb-6">
+                            <label className="block text-sm font-medium text-gray-300 mb-2">Add Bot Token</label>
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={newBotToken}
+                                    onChange={(e) => setNewBotToken(e.target.value)}
+                                    placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+                                    className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                                />
+                                <button
+                                    onClick={handleAddBot}
+                                    disabled={isAddingBot}
+                                    className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors"
+                                >
+                                    {isAddingBot ? <SpinnerGap className="w-5 h-5 animate-spin" /> : <Plus weight="bold" className="w-5 h-5" />}
+                                </button>
+                            </div>
+                            {botError && (
+                                <p className="text-red-400 text-sm mt-2">{botError}</p>
+                            )}
+                        </div>
+
+                        {/* Bot List */}
+                        <div>
+                            <h3 className="text-sm font-medium text-gray-300 mb-3">Configured Bots ({bots.length})</h3>
+                            {bots.length === 0 ? (
+                                <p className="text-gray-500 text-sm py-4 text-center">No bots configured. Add your first bot above.</p>
+                            ) : (
+                                <div className="space-y-2 max-h-48 overflow-y-auto">
+                                    {bots.map((bot, index) => (
+                                        <div key={bot.id} className="flex items-center justify-between px-4 py-3 bg-white/5 rounded-xl">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center text-white font-bold text-sm">
+                                                    {index + 1}
+                                                </div>
+                                                <div>
+                                                    <p className="text-white font-medium">
+                                                        @{bot.username || 'Unknown Bot'}
+                                                    </p>
+                                                    <p className="text-xs text-gray-500">
+                                                        {bot.isActive ? '🟢 Active' : '🔴 Inactive'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={() => handleRemoveBot(bot.id)}
+                                                className="p-2 hover:bg-red-500/20 rounded-lg text-gray-400 hover:text-red-400 transition-colors"
+                                                title="Remove bot"
+                                            >
+                                                <Trash weight="duotone" className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="mt-6 pt-4 border-t border-white/10">
+                            <p className="text-xs text-gray-500 text-center">
+                                More bots = faster uploads/downloads (20 msg/min per bot)
+                            </p>
                         </div>
                     </div>
                 </div>
