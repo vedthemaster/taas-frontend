@@ -27,10 +27,14 @@ import {
     FileZip,
     FileCode,
     List,
-    SquaresFour
+    SquaresFour,
+    MagnifyingGlass,
+    SortAscending,
+    ArrowRight,
+    FolderOpen
 } from '@phosphor-icons/react';
 import { useAuthStore, useFolderStore } from '@/lib/store';
-import { fileApi, chunkedUploadApi, splitFileIntoChunks, CHUNK_THRESHOLD, botApi } from '@/lib/api';
+import { fileApi, folderApi, chunkedUploadApi, splitFileIntoChunks, CHUNK_THRESHOLD, botApi } from '@/lib/api';
 
 // File icon helper
 const getFileIcon = (mimeType: string) => {
@@ -100,6 +104,62 @@ const TreeItem = ({ item, level, currentFolderId, onSelect }: TreeItemProps) => 
                     level={level + 1}
                     currentFolderId={currentFolderId}
                     onSelect={onSelect}
+                />
+            ))}
+        </div>
+    );
+};
+
+// Folder tree item for move modal
+interface FolderTreeItemProps {
+    folder: {
+        id: string;
+        name: string;
+        childCount: number;
+        children: any[];
+    };
+    depth: number;
+    onSelect: (folderId: string) => void;
+    disabled?: boolean;
+    moveItemId?: string;
+}
+
+const FolderTreeItem = ({ folder, depth, onSelect, disabled, moveItemId }: FolderTreeItemProps) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const isDisabled = disabled || folder.id === moveItemId;
+
+    return (
+        <div>
+            <button
+                onClick={() => !isDisabled && onSelect(folder.id)}
+                disabled={isDisabled}
+                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-all ${isDisabled
+                    ? 'opacity-50 cursor-not-allowed text-gray-500'
+                    : 'hover:bg-white/5 text-gray-300 hover:text-white'
+                    }`}
+                style={{ paddingLeft: `${12 + depth * 16}px` }}
+            >
+                {folder.children && folder.children.length > 0 ? (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}
+                        className="p-0.5 hover:bg-white/10 rounded"
+                    >
+                        {isOpen ? <CaretDown weight="bold" className="w-3 h-3" /> : <CaretRight weight="bold" className="w-3 h-3" />}
+                    </button>
+                ) : (
+                    <span className="w-4" />
+                )}
+                <Folder weight="duotone" className="w-4 h-4 text-blue-400" />
+                <span className="truncate flex-1 text-sm">{folder.name}</span>
+            </button>
+            {isOpen && folder.children?.map((child: any) => (
+                <FolderTreeItem
+                    key={child.id}
+                    folder={child}
+                    depth={depth + 1}
+                    onSelect={onSelect}
+                    disabled={disabled}
+                    moveItemId={moveItemId}
                 />
             ))}
         </div>
@@ -184,6 +244,28 @@ export default function DashboardPage() {
     const [newChannelId, setNewChannelId] = useState('');
     const [isAddingBot, setIsAddingBot] = useState(false);
     const [botError, setBotError] = useState('');
+
+    // Search and sort state
+    const [searchQuery, setSearchQuery] = useState('');
+    const [sortBy, setSortBy] = useState<'name' | 'date' | 'size'>('name');
+    const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+    // Context menu state
+    const [contextMenu, setContextMenu] = useState<{
+        x: number;
+        y: number;
+        type: 'file' | 'folder';
+        item: any;
+    } | null>(null);
+
+    // Move modal state
+    const [showMoveModal, setShowMoveModal] = useState(false);
+    const [moveItem, setMoveItem] = useState<{
+        type: 'file' | 'folder';
+        id: string;
+        name: string;
+    } | null>(null);
+    const [isMoving, setIsMoving] = useState(false);
 
     // Load bots for management
     const loadBots = useCallback(async () => {
@@ -663,6 +745,92 @@ export default function DashboardPage() {
         showDeleteConfirm('file', fileId, fileName);
     };
 
+    // Context menu handler
+    const handleContextMenu = (e: React.MouseEvent, type: 'file' | 'folder', item: any) => {
+        e.preventDefault();
+        setContextMenu({
+            x: e.clientX,
+            y: e.clientY,
+            type,
+            item,
+        });
+    };
+
+    // Close context menu
+    const closeContextMenu = () => {
+        setContextMenu(null);
+    };
+
+    // Handle move action from context menu
+    const handleMoveAction = () => {
+        if (contextMenu) {
+            setMoveItem({
+                type: contextMenu.type,
+                id: contextMenu.item.id,
+                name: contextMenu.item.name,
+            });
+            setShowMoveModal(true);
+            closeContextMenu();
+        }
+    };
+
+    // Confirm move
+    const confirmMove = async (targetFolderId: string | null) => {
+        if (!moveItem) return;
+
+        setIsMoving(true);
+        try {
+            if (moveItem.type === 'file') {
+                await fileApi.move(moveItem.id, targetFolderId);
+            } else {
+                await folderApi.move(moveItem.id, targetFolderId);
+            }
+            loadFolderContents(currentFolderId || undefined);
+            loadFolderTree();
+            setShowMoveModal(false);
+            setMoveItem(null);
+        } catch (error) {
+            console.error('Failed to move:', error);
+        } finally {
+            setIsMoving(false);
+        }
+    };
+
+    // Close context menu on click outside
+    useEffect(() => {
+        const handleClick = () => closeContextMenu();
+        if (contextMenu) {
+            document.addEventListener('click', handleClick);
+        }
+        return () => document.removeEventListener('click', handleClick);
+    }, [contextMenu]);
+
+    // Computed filtered and sorted files
+    const filteredFiles = files
+        .filter((f: any) =>
+            !searchQuery || f.name.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        .sort((a: any, b: any) => {
+            let comparison = 0;
+            switch (sortBy) {
+                case 'name':
+                    comparison = a.name.localeCompare(b.name);
+                    break;
+                case 'date':
+                    comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+                    break;
+                case 'size':
+                    comparison = parseInt(a.size) - parseInt(b.size);
+                    break;
+            }
+            return sortOrder === 'desc' ? -comparison : comparison;
+        });
+
+    // Computed filtered folders (search only)
+    const filteredFolders = folders.filter((f: any) =>
+        !searchQuery || f.name.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
     if (authLoading) {
         return (
             <div className="min-h-screen bg-gradient-hero flex items-center justify-center">
@@ -763,6 +931,39 @@ export default function DashboardPage() {
                                 </button>
                             </span>
                         ))}
+                    </div>
+
+                    {/* Search and Sort */}
+                    <div className="flex items-center gap-3">
+                        {/* Search */}
+                        <input
+                            type="text"
+                            placeholder="Search..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500/50 focus:outline-none w-48"
+                        />
+
+                        {/* Sort dropdown */}
+                        <div className="relative">
+                            <select
+                                value={`${sortBy}-${sortOrder}`}
+                                onChange={(e) => {
+                                    const [newSortBy, newSortOrder] = e.target.value.split('-') as ['name' | 'date' | 'size', 'asc' | 'desc'];
+                                    setSortBy(newSortBy);
+                                    setSortOrder(newSortOrder);
+                                }}
+                                className="appearance-none pl-3 pr-8 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:border-blue-500/50 focus:outline-none cursor-pointer"
+                            >
+                                <option value="name-asc" className="bg-gray-800">Name (A-Z)</option>
+                                <option value="name-desc" className="bg-gray-800">Name (Z-A)</option>
+                                <option value="date-desc" className="bg-gray-800">Date (Newest)</option>
+                                <option value="date-asc" className="bg-gray-800">Date (Oldest)</option>
+                                <option value="size-desc" className="bg-gray-800">Size (Largest)</option>
+                                <option value="size-asc" className="bg-gray-800">Size (Smallest)</option>
+                            </select>
+                            <SortAscending weight="bold" className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                        </div>
                     </div>
 
                     {/* Actions */}
@@ -927,7 +1128,7 @@ export default function DashboardPage() {
                         <div className="flex items-center justify-center h-full">
                             <div className="spinner" />
                         </div>
-                    ) : folders.length === 0 && files.length === 0 ? (
+                    ) : filteredFolders.length === 0 && filteredFiles.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-full text-center">
                             <div className="w-20 h-20 rounded-full bg-white/5 flex items-center justify-center mb-4">
                                 <Folder weight="duotone" className="w-10 h-10 text-gray-600" />
@@ -949,10 +1150,11 @@ export default function DashboardPage() {
                     ) : viewMode === 'grid' ? (
                         <div key="grid" className="file-grid view-transition">
                             {/* Folders - Grid */}
-                            {folders.map((folder: any) => (
+                            {filteredFolders.map((folder: any) => (
                                 <button
                                     key={folder.id}
                                     onClick={() => setCurrentFolder(folder.id)}
+                                    onContextMenu={(e) => handleContextMenu(e, 'folder', folder)}
                                     className="glass-card p-4 text-left hover:border-blue-500/50 transition-all group"
                                 >
                                     <div className="flex items-start justify-between mb-3">
@@ -977,12 +1179,13 @@ export default function DashboardPage() {
                             ))}
 
                             {/* Files - Grid */}
-                            {files.map((file: any) => (
+                            {filteredFiles.map((file: any) => (
                                 <div
                                     key={file.id}
                                     className={`glass-card p-4 hover:border-blue-500/50 transition-all group relative ${selectedFiles.has(file.id) ? 'border-blue-500 bg-blue-500/10' : ''
                                         }`}
                                     onClick={() => isSelectionMode && toggleFileSelection(file.id)}
+                                    onContextMenu={(e) => handleContextMenu(e, 'file', file)}
                                 >
                                     {/* Selection checkbox */}
                                     <button
@@ -1035,10 +1238,11 @@ export default function DashboardPage() {
                     ) : (
                         <div key="list" className="space-y-1 view-transition">
                             {/* Folders - List */}
-                            {folders.map((folder: any) => (
+                            {filteredFolders.map((folder: any) => (
                                 <button
                                     key={folder.id}
                                     onClick={() => setCurrentFolder(folder.id)}
+                                    onContextMenu={(e) => handleContextMenu(e, 'folder', folder)}
                                     className="w-full flex items-center gap-4 p-3 rounded-lg hover:bg-white/5 transition-all group text-left"
                                 >
                                     <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
@@ -1061,12 +1265,13 @@ export default function DashboardPage() {
                             ))}
 
                             {/* Files - List */}
-                            {files.map((file: any) => (
+                            {filteredFiles.map((file: any) => (
                                 <div
                                     key={file.id}
                                     className={`flex items-center gap-4 p-3 rounded-lg hover:bg-white/5 transition-all group ${selectedFiles.has(file.id) ? 'bg-blue-500/10' : ''
                                         }`}
                                     onClick={() => isSelectionMode && toggleFileSelection(file.id)}
+                                    onContextMenu={(e) => handleContextMenu(e, 'file', file)}
                                 >
                                     {/* Selection checkbox */}
                                     <button
@@ -1403,6 +1608,92 @@ export default function DashboardPage() {
                             <p className="text-xs text-gray-500 text-center">
                                 More bots = faster uploads/downloads (20 msg/min per bot)
                             </p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Context Menu */}
+            {contextMenu && (
+                <div
+                    className="fixed z-50 bg-gray-800 border border-white/10 rounded-lg shadow-xl py-1 min-w-48"
+                    style={{ top: contextMenu.y, left: contextMenu.x }}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    {contextMenu.type === 'file' && (
+                        <button
+                            onClick={() => {
+                                handleDownload(contextMenu.item.id, contextMenu.item.name, Number(contextMenu.item.size));
+                                closeContextMenu();
+                            }}
+                            className="w-full flex items-center gap-3 px-4 py-2 hover:bg-white/5 text-gray-300 hover:text-white text-sm"
+                        >
+                            <DownloadSimple weight="duotone" className="w-4 h-4" />
+                            Download
+                        </button>
+                    )}
+                    <button
+                        onClick={handleMoveAction}
+                        className="w-full flex items-center gap-3 px-4 py-2 hover:bg-white/5 text-gray-300 hover:text-white text-sm"
+                    >
+                        <ArrowRight weight="duotone" className="w-4 h-4" />
+                        Move to...
+                    </button>
+                    <div className="border-t border-white/10 my-1" />
+                    <button
+                        onClick={() => {
+                            showDeleteConfirm(contextMenu.type, contextMenu.item.id, contextMenu.item.name);
+                            closeContextMenu();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2 hover:bg-red-500/10 text-red-400 hover:text-red-300 text-sm"
+                    >
+                        <Trash weight="duotone" className="w-4 h-4" />
+                        Delete
+                    </button>
+                </div>
+            )}
+
+            {/* Move Modal */}
+            {showMoveModal && moveItem && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="glass-card p-6 w-full max-w-md">
+                        <h3 className="text-lg font-semibold mb-4">
+                            Move "{moveItem.name}"
+                        </h3>
+                        <p className="text-sm text-gray-400 mb-4">Select destination folder:</p>
+
+                        <div className="max-h-64 overflow-y-auto bg-black/20 rounded-lg p-2 mb-4">
+                            {/* Root option */}
+                            <button
+                                onClick={() => confirmMove(null)}
+                                disabled={isMoving}
+                                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-white/5 text-left text-gray-300 hover:text-white"
+                            >
+                                <House weight="duotone" className="w-4 h-4 text-blue-400" />
+                                Root (All Files)
+                            </button>
+
+                            {/* Folder tree */}
+                            {folderTree.map((folder: any) => (
+                                <FolderTreeItem
+                                    key={folder.id}
+                                    folder={folder}
+                                    depth={0}
+                                    onSelect={(folderId) => confirmMove(folderId)}
+                                    disabled={isMoving || (moveItem.type === 'folder' && folder.id === moveItem.id)}
+                                    moveItemId={moveItem.type === 'folder' ? moveItem.id : undefined}
+                                />
+                            ))}
+                        </div>
+
+                        <div className="flex justify-end gap-3">
+                            <button
+                                onClick={() => { setShowMoveModal(false); setMoveItem(null); }}
+                                className="btn-secondary"
+                                disabled={isMoving}
+                            >
+                                Cancel
+                            </button>
                         </div>
                     </div>
                 </div>

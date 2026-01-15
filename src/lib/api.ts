@@ -84,13 +84,16 @@ export const folderApi = {
     update: (id: string, name: string) =>
         api.put(`/folders/${id}`, { name }),
 
+    move: (id: string, targetParentId: string | null) =>
+        api.patch(`/folders/${id}/move`, { targetParentId }),
+
     delete: (id: string) => api.delete(`/folders/${id}`),
 };
 
 // File API
 export const fileApi = {
-    getAll: (folderId?: string) =>
-        api.get('/files', { params: { folderId } }),
+    getAll: (folderId?: string, search?: string, sortBy?: string, sortOrder?: string) =>
+        api.get('/files', { params: { folderId, search, sortBy, sortOrder } }),
 
     getById: (id: string) => api.get(`/files/${id}`),
 
@@ -107,6 +110,9 @@ export const fileApi = {
 
     download: (id: string) =>
         api.get(`/files/${id}/download`, { responseType: 'blob' }),
+
+    move: (id: string, targetFolderId: string | null) =>
+        api.patch(`/files/${id}/move`, { targetFolderId }),
 
     delete: (id: string) => api.delete(`/files/${id}`),
 };
