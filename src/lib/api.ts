@@ -46,13 +46,14 @@ export const authApi = {
 };
 
 // Telegram API (legacy - for backward compatibility)
+// Telegram API
 export const telegramApi = {
-    setup: (botToken: string, channelId: string) =>
-        api.post('/bots', { botToken, channelId }),
+    setup: (botToken: string, channelId: string, apiId: string, apiHash: string) =>
+        api.post('/telegram/setup', { botToken, channelId, apiId, apiHash }),
 
-    getStatus: () => api.get('/bots'),
+    getStatus: () => api.get('/telegram/status'),
 
-    validate: () => api.get('/bots'),
+    validate: () => api.post('/telegram/validate'),
 };
 
 // Bot Management API
