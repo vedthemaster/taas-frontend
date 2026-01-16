@@ -26,12 +26,13 @@ import {
     MusicNotes,
     FileZip,
     FileCode,
-    List,
+    List as ListIcon,
     SquaresFour,
     MagnifyingGlass,
     SortAscending,
     ArrowRight,
-    FolderOpen
+    FolderOpen,
+    List
 } from '@phosphor-icons/react';
 import { useAuthStore, useFolderStore } from '@/lib/store';
 import { fileApi, folderApi, chunkedUploadApi, splitFileIntoChunks, CHUNK_THRESHOLD, botApi } from '@/lib/api';
@@ -266,6 +267,9 @@ export default function DashboardPage() {
         name: string;
     } | null>(null);
     const [isMoving, setIsMoving] = useState(false);
+
+    // Mobile sidebar state
+    const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
     // Load bots for management
     const loadBots = useCallback(async () => {
@@ -841,17 +845,29 @@ export default function DashboardPage() {
 
     return (
         <div className="min-h-screen bg-gradient-dark flex">
+            {/* Mobile sidebar overlay */}
+            <div
+                className={`sidebar-overlay ${isSidebarOpen ? 'open' : ''} lg:hidden`}
+                onClick={() => setIsSidebarOpen(false)}
+            />
+
             {/* Sidebar */}
-            <aside className="sidebar flex flex-col">
-                {/* Logo */}
-                <div className="p-5 border-b border-white/5">
+            <aside className={`sidebar flex flex-col ${isSidebarOpen ? 'open' : ''}`}>
+                {/* Logo and close button */}
+                <div className="p-5 border-b border-white/5 flex items-center justify-between">
                     <NextImage src="/tass.png" alt="TAAS" width={100} height={32} className="h-8 w-auto" />
+                    <button
+                        onClick={() => setIsSidebarOpen(false)}
+                        className="lg:hidden p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white"
+                    >
+                        <X weight="bold" className="w-5 h-5" />
+                    </button>
                 </div>
 
                 {/* Folder tree */}
                 <div className="flex-1 overflow-y-auto py-4 px-2">
                     <button
-                        onClick={() => setCurrentFolder(null)}
+                        onClick={() => { setCurrentFolder(null); setIsSidebarOpen(false); }}
                         className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-all hover:bg-white/5 mb-2 ${currentFolderId === null ? 'bg-blue-500/20 text-blue-400' : 'text-gray-300'
                             }`}
                     >
@@ -875,7 +891,7 @@ export default function DashboardPage() {
                                 item={item}
                                 level={0}
                                 currentFolderId={currentFolderId}
-                                onSelect={setCurrentFolder}
+                                onSelect={(id) => { setCurrentFolder(id); setIsSidebarOpen(false); }}
                             />
                         ))}
                     </div>
@@ -909,43 +925,68 @@ export default function DashboardPage() {
             </aside>
 
             {/* Main content */}
-            <main className="flex-1 flex flex-col overflow-hidden">
+            <main className="flex-1 flex flex-col overflow-hidden lg:ml-0">
                 {/* Header */}
-                <header className="flex items-center justify-between px-6 py-4 border-b border-white/5">
-                    {/* Breadcrumbs */}
-                    <div className="flex items-center gap-2 text-sm">
-                        <button
-                            onClick={() => setCurrentFolder(null)}
-                            className="text-gray-400 hover:text-white"
-                        >
-                            All Files
-                        </button>
-                        {breadcrumbs.map((crumb, index) => (
-                            <span key={crumb.id} className="flex items-center gap-2">
-                                <CaretRight weight="bold" className="w-4 h-4 text-gray-600" />
+                <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between px-4 lg:px-6 py-3 lg:py-4 border-b border-white/5 gap-3">
+                    {/* Top row: Hamburger + Breadcrumbs + Upload */}
+                    <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                            {/* Hamburger menu for mobile */}
+                            <button
+                                onClick={() => setIsSidebarOpen(true)}
+                                className="lg:hidden p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white"
+                            >
+                                <List weight="bold" className="w-5 h-5" />
+                            </button>
+
+                            {/* Breadcrumbs */}
+                            <div className="flex items-center gap-2 text-sm">
                                 <button
-                                    onClick={() => setCurrentFolder(crumb.id)}
-                                    className={index === breadcrumbs.length - 1 ? 'text-white' : 'text-gray-400 hover:text-white'}
+                                    onClick={() => setCurrentFolder(null)}
+                                    className="text-gray-400 hover:text-white"
                                 >
-                                    {crumb.name}
+                                    All Files
                                 </button>
-                            </span>
-                        ))}
+                                {breadcrumbs.map((crumb, index) => (
+                                    <span key={crumb.id} className="flex items-center gap-2">
+                                        <CaretRight weight="bold" className="w-4 h-4 text-gray-600" />
+                                        <button
+                                            onClick={() => setCurrentFolder(crumb.id)}
+                                            className={`truncate max-w-[80px] lg:max-w-none ${index === breadcrumbs.length - 1 ? 'text-white' : 'text-gray-400 hover:text-white'}`}
+                                        >
+                                            {crumb.name}
+                                        </button>
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Mobile: Upload button only */}
+                        <label className="lg:hidden btn-primary flex items-center gap-2 text-sm py-2 px-3 cursor-pointer">
+                            <Upload weight="duotone" className="w-4 h-4" />
+                            <span className="hidden sm:inline">Upload</span>
+                            <input
+                                type="file"
+                                multiple
+                                className="hidden"
+                                onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
+                            />
+                        </label>
                     </div>
 
-                    {/* Search and Sort */}
-                    <div className="flex items-center gap-3">
+                    {/* Bottom row on mobile / Right side on desktop: Search, Sort, Actions */}
+                    <div className="flex items-center gap-2 lg:gap-3 overflow-x-auto">
                         {/* Search */}
                         <input
                             type="text"
                             placeholder="Search..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500/50 focus:outline-none w-48"
+                            className="flex-1 lg:flex-none px-3 lg:px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500/50 focus:outline-none w-full lg:w-48"
                         />
 
-                        {/* Sort dropdown */}
-                        <div className="relative">
+                        {/* Sort dropdown - hidden on very small screens */}
+                        <div className="relative hidden sm:block">
                             <select
                                 value={`${sortBy}-${sortOrder}`}
                                 onChange={(e) => {
@@ -964,12 +1005,9 @@ export default function DashboardPage() {
                             </select>
                             <SortAscending weight="bold" className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                         </div>
-                    </div>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-3">
                         {/* View mode toggle */}
-                        <div className="flex items-center gap-1 p-1 bg-white/5 rounded-lg">
+                        <div className="flex items-center gap-1 p-1 bg-white/5 rounded-lg flex-shrink-0">
                             <button
                                 onClick={() => setViewMode('grid')}
                                 className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
@@ -982,18 +1020,19 @@ export default function DashboardPage() {
                                 className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
                                 title="List view"
                             >
-                                <List weight={viewMode === 'list' ? 'fill' : 'regular'} className="w-4 h-4" />
+                                <ListIcon weight={viewMode === 'list' ? 'fill' : 'regular'} className="w-4 h-4" />
                             </button>
                         </div>
 
+                        {/* Desktop only: New Folder and Upload buttons */}
                         <button
                             onClick={() => setShowNewFolderModal(true)}
-                            className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
+                            className="hidden lg:flex btn-secondary items-center gap-2 text-sm py-2 px-4"
                         >
                             <FolderPlus weight="duotone" className="w-4 h-4" />
                             New Folder
                         </button>
-                        <label className="btn-primary flex items-center gap-2 text-sm py-2 px-4 cursor-pointer">
+                        <label className="hidden lg:flex btn-primary items-center gap-2 text-sm py-2 px-4 cursor-pointer">
                             <Upload weight="duotone" className="w-4 h-4" />
                             Upload
                             <input
@@ -1119,7 +1158,7 @@ export default function DashboardPage() {
 
                 {/* Content area */}
                 <div
-                    className={`flex-1 overflow-y-auto p-6 ${dragOver ? 'bg-blue-500/10' : ''}`}
+                    className={`flex-1 overflow-y-auto p-4 lg:p-6 ${dragOver ? 'bg-blue-500/10' : ''}`}
                     onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                     onDragLeave={() => setDragOver(false)}
                     onDrop={handleDrop}

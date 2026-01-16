@@ -63,55 +63,51 @@ export default function AuthPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-hero flex">
+    <div className="min-h-screen bg-gradient-hero flex flex-col lg:flex-row">
       {/* Background orbs */}
       <div className="orb orb-blue w-96 h-96 top-20 -left-48 animate-pulse-glow" />
       <div className="orb orb-cyan w-80 h-80 bottom-20 right-20 animate-pulse-glow delay-200" />
 
       {/* Left side - Hero content */}
-      <div className="hidden lg:flex lg:w-1/2 flex-col justify-center px-12 xl:px-20 relative">
+      <div className="flex lg:w-1/2 flex-col justify-center px-6 pt-12 pb-8 lg:px-12 xl:px-20 lg:py-0 relative">
         <div className="animate-fade-in-up">
-          <div className="mb-8">
-            <Image src="/tass.png" alt="TAAS" width={160} height={56} className="h-14 w-auto" />
+          <div className="mb-6 lg:mb-8">
+            <Image src="/tass.png" alt="TAAS" width={160} height={56} className="h-12 lg:h-14 w-auto" />
           </div>
 
-          <h1 className="text-5xl xl:text-6xl font-medium leading-tight mb-6 tracking-tight">
+          <h1 className="text-4xl lg:text-5xl xl:text-6xl font-medium leading-tight mb-4 lg:mb-6 tracking-tight">
             Your files,
             <br />
             <span className="gradient-text">unlimited storage</span>
           </h1>
 
-          <p className="text-base text-gray-400 mb-12 max-w-md leading-relaxed">
+          <p className="text-sm lg:text-base text-gray-400 mb-8 lg:mb-12 max-w-md leading-relaxed">
             Store your files securely using Telegram as your personal cloud.
             No storage limits, no monthly fees.
           </p>
 
-          <div className="space-y-6">
-            <div className="flex items-center gap-4 animate-slide-in-left delay-100">
+          <div className="space-y-4 lg:space-y-6">
+            <div className="flex items-center gap-3 lg:gap-4 animate-slide-in-left delay-100">
               <Lightning weight="duotone" className="w-5 h-5 text-blue-400" />
-              <span className="text-gray-300">Upload files up to 2GB</span>
+              <span className="text-sm lg:text-base text-gray-300">Upload files up to 2GB</span>
             </div>
 
-            <div className="flex items-center gap-4 animate-slide-in-left delay-200">
+            <div className="flex items-center gap-3 lg:gap-4 animate-slide-in-left delay-200">
               <ShieldCheck weight="duotone" className="w-5 h-5 text-cyan-400" />
-              <span className="text-gray-300">Your files stay in your channel</span>
+              <span className="text-sm lg:text-base text-gray-300">Your files stay in your channel</span>
             </div>
 
-            <div className="flex items-center gap-4 animate-slide-in-left delay-300">
+            <div className="flex items-center gap-3 lg:gap-4 animate-slide-in-left delay-300">
               <CloudArrowUp weight="duotone" className="w-5 h-5 text-purple-400" />
-              <span className="text-gray-300">No caps, no quotas</span>
+              <span className="text-sm lg:text-base text-gray-300">No caps, no quotas</span>
             </div>
           </div>
         </div>
       </div>
 
       {/* Right side - Auth form */}
-      <div className="flex-1 flex items-center justify-center px-6 py-12">
+      <div className="flex-1 flex items-center justify-center px-6 py-8 lg:py-12">
         <div className="w-full max-w-sm animate-fade-in-up">
-          {/* Mobile logo */}
-          <div className="lg:hidden mb-10">
-            <Image src="/tass.png" alt="TAAS" width={160} height={56} className="h-14 w-auto" />
-          </div>
 
           <div className="glass-card p-8">
             {/* Tabs */}
