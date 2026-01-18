@@ -6,6 +6,8 @@ interface User {
     email: string;
     createdAt: string;
     hasTelegramConfig: boolean;
+    useSystemBots?: boolean;
+    maxUploadSize?: number;
 }
 
 interface AuthState {

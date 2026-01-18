@@ -45,11 +45,13 @@ export const authApi = {
     getMe: () => api.get('/auth/me'),
 };
 
-// Telegram API (legacy - for backward compatibility)
 // Telegram API
 export const telegramApi = {
-    setup: (botToken: string, channelId: string, apiId: string, apiHash: string) =>
-        api.post('/telegram/setup', { botToken, channelId, apiId, apiHash }),
+    setup: (botToken: string, channelId: string) =>
+        api.post('/telegram/setup', { botToken, channelId }),
+
+    skipSetup: () =>
+        api.post('/telegram/skip'),
 
     getStatus: () => api.get('/telegram/status'),
 
