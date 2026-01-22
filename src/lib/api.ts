@@ -71,6 +71,19 @@ export const botApi = {
         api.put('/bots/channel', { channelId }),
 };
 
+// Channel Management API (for multi-channel throughput)
+export const channelApi = {
+    getAll: () => api.get('/channels'),
+
+    add: (channelId: string, name?: string) =>
+        api.post('/channels', { channelId, name }),
+
+    update: (id: string, data: { name?: string; isActive?: boolean }) =>
+        api.patch(`/channels/${id}`, data),
+
+    remove: (id: string) => api.delete(`/channels/${id}`),
+};
+
 
 // Folder API
 export const folderApi = {
@@ -121,8 +134,8 @@ export const fileApi = {
 };
 
 // Chunked upload constants
-export const CHUNK_SIZE = 16 * 1024 * 1024; // 16 MB
-export const CHUNK_THRESHOLD = 16 * 1024 * 1024; // 16 MB - all files >16MB get chunked
+export const CHUNK_SIZE = 19 * 1024 * 1024; // 19 MB (Telegram download limit is 20MB)
+export const CHUNK_THRESHOLD = 19 * 1024 * 1024; // 19 MB - all files >19MB get chunked
 
 // Chunked upload API
 export const chunkedUploadApi = {
@@ -224,6 +237,74 @@ export const splitFileIntoChunks = (file: File): Blob[] => {
         offset = end;
     }
     return chunks;
+};
+
+// File System Access API for streaming downloads
+// Writes directly to disk without buffering entire file in memory
+export const streamingDownload = async (
+    fileId: string,
+    fileName: string,
+    fileSize: number,
+    onProgress?: (loaded: number, total: number) => void
+): Promise<void> => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+
+    // Check if File System Access API is supported
+    if ('showSaveFilePicker' in window) {
+        try {
+            // Use File System Access API for direct-to-disk writing
+            const handle = await (window as any).showSaveFilePicker({
+                suggestedName: fileName,
+            });
+            const writable = await handle.createWritable();
+
+            const response = await fetch(`${API_URL}/files/${fileId}/download/stream`, {
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+            });
+
+            if (!response.ok) {
+                throw new Error('Download failed');
+            }
+
+            const reader = response.body?.getReader();
+            if (!reader) {
+                throw new Error('No response body');
+            }
+
+            let loaded = 0;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                await writable.write(value);
+                loaded += value.length;
+
+                if (onProgress) {
+                    onProgress(loaded, fileSize);
+                }
+            }
+
+            await writable.close();
+            return;
+        } catch (error: any) {
+            // User cancelled the save dialog or API not available
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            console.warn('File System Access API failed, falling back to blob download:', error);
+        }
+    }
+
+    // Fallback: Download as blob and trigger download
+    const blob = await chunkedUploadApi.downloadChunked(fileId, onProgress);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 };
 
 export default api;

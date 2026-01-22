@@ -35,7 +35,7 @@ import {
     List
 } from '@phosphor-icons/react';
 import { useAuthStore, useFolderStore } from '@/lib/store';
-import { fileApi, folderApi, chunkedUploadApi, splitFileIntoChunks, CHUNK_THRESHOLD, botApi } from '@/lib/api';
+import { fileApi, folderApi, chunkedUploadApi, splitFileIntoChunks, CHUNK_THRESHOLD, botApi, channelApi, streamingDownload } from '@/lib/api';
 
 // File icon helper
 const getFileIcon = (mimeType: string) => {
@@ -247,6 +247,12 @@ export default function DashboardPage() {
     const [isAddingBot, setIsAddingBot] = useState(false);
     const [botError, setBotError] = useState('');
 
+    // Channel management state (additional channels for throughput)
+    const [additionalChannels, setAdditionalChannels] = useState<Array<{ id: string; channelId: string; name: string | null; isActive: boolean }>>([]);
+    const [newAdditionalChannel, setNewAdditionalChannel] = useState('');
+    const [isAddingChannel, setIsAddingChannel] = useState(false);
+    const [channelError, setChannelError] = useState('');
+
     // Search and sort state
     const [searchQuery, setSearchQuery] = useState('');
     const [sortBy, setSortBy] = useState<'name' | 'date' | 'size'>('name');
@@ -279,6 +285,14 @@ export default function DashboardPage() {
             setBots(response.data.bots || []);
             setChannelId(response.data.channelId || '');
             setNewChannelId(response.data.channelId || '');
+
+            // Also load additional channels
+            try {
+                const channelResponse = await channelApi.getAll();
+                setAdditionalChannels(channelResponse.data.channels || []);
+            } catch (e) {
+                console.error('Failed to load channels:', e);
+            }
         } catch (error) {
             console.error('Failed to load bots:', error);
         }
@@ -323,6 +337,37 @@ export default function DashboardPage() {
             setChannelId(newChannelId);
         } catch (error) {
             console.error('Failed to update channel:', error);
+        }
+    };
+
+    // Add an additional channel for throughput
+    const handleAddChannel = async () => {
+        if (!newAdditionalChannel.trim()) {
+            setChannelError('Channel ID is required');
+            return;
+        }
+
+        setIsAddingChannel(true);
+        setChannelError('');
+
+        try {
+            await channelApi.add(newAdditionalChannel.trim());
+            setNewAdditionalChannel('');
+            await loadBots(); // Reloads channels too
+        } catch (error: any) {
+            setChannelError(error.response?.data?.error || error.response?.data?.details || 'Failed to add channel');
+        } finally {
+            setIsAddingChannel(false);
+        }
+    };
+
+    // Remove an additional channel
+    const handleRemoveChannel = async (channelDbId: string) => {
+        try {
+            await channelApi.remove(channelDbId);
+            await loadBots(); // Reloads channels too
+        } catch (error) {
+            console.error('Failed to remove channel:', error);
         }
     };
 
@@ -595,12 +640,9 @@ export default function DashboardPage() {
         }
     };
 
-    // Execute actual download
-    const executeDownload = (fileId: string, fileName: string, fileSize: number) => {
+    // Execute actual download using File System Access API
+    const executeDownload = async (fileId: string, fileName: string, fileSize: number) => {
         try {
-            const xhr = new XMLHttpRequest();
-            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-
             setDownloadProgress({
                 fileName,
                 loaded: 0,
@@ -608,48 +650,25 @@ export default function DashboardPage() {
                 percent: 0,
             });
 
-            xhr.open('GET', `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/files/${fileId}/download`);
-            if (token) {
-                xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            await streamingDownload(fileId, fileName, fileSize, (loaded, total) => {
+                const percent = Math.round((loaded / total) * 100);
+                setDownloadProgress({
+                    fileName,
+                    loaded,
+                    total,
+                    percent,
+                });
+            });
+
+            setDownloadProgress(null);
+            processNextDownload();
+        } catch (error: any) {
+            // User cancelled save dialog
+            if (error.name === 'AbortError') {
+                setDownloadProgress(null);
+                processNextDownload();
+                return;
             }
-            xhr.responseType = 'blob';
-
-            xhr.onprogress = (event) => {
-                if (event.lengthComputable) {
-                    const percent = Math.round((event.loaded / event.total) * 100);
-                    setDownloadProgress({
-                        fileName,
-                        loaded: event.loaded,
-                        total: event.total,
-                        percent,
-                    });
-                }
-            };
-
-            xhr.onload = () => {
-                if (xhr.status === 200) {
-                    const blob = xhr.response;
-                    const url = window.URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.setAttribute('download', fileName);
-                    document.body.appendChild(link);
-                    link.click();
-                    link.remove();
-                    window.URL.revokeObjectURL(url);
-                }
-                setDownloadProgress(null);
-                processNextDownload();
-            };
-
-            xhr.onerror = () => {
-                console.error('Download failed');
-                setDownloadProgress(null);
-                processNextDownload();
-            };
-
-            xhr.send();
-        } catch (error) {
             console.error('Failed to download file:', error);
             setDownloadProgress(null);
             processNextDownload();
@@ -1701,12 +1720,12 @@ export default function DashboardPage() {
                         </div>
 
                         {/* Bot List */}
-                        <div>
+                        <div className="mb-6">
                             <h3 className="text-sm font-medium text-gray-300 mb-3">Configured Bots ({bots.length})</h3>
                             {bots.length === 0 ? (
                                 <p className="text-gray-500 text-sm py-4 text-center">No bots configured. Add your first bot above.</p>
                             ) : (
-                                <div className="space-y-2 max-h-48 overflow-y-auto">
+                                <div className="space-y-2 max-h-32 overflow-y-auto">
                                     {bots.map((bot, index) => (
                                         <div key={bot.id} className="flex items-center justify-between px-4 py-3 bg-white/5 rounded-xl">
                                             <div className="flex items-center gap-3">
@@ -1735,9 +1754,61 @@ export default function DashboardPage() {
                             )}
                         </div>
 
-                        <div className="mt-6 pt-4 border-t border-white/10">
+                        {/* Additional Channels for Throughput */}
+                        <div className="border-t border-white/10 pt-6 mb-6">
+                            <h3 className="text-sm font-medium text-gray-300 mb-2">
+                                Additional Channels <span className="text-xs text-gray-500">(for faster uploads)</span>
+                            </h3>
+                            <p className="text-xs text-gray-500 mb-3">
+                                Add more channels to increase upload speed. Each bot can send 20 msg/min per channel.
+                            </p>
+
+                            {/* Add Channel */}
+                            <div className="flex gap-2 mb-3">
+                                <input
+                                    type="text"
+                                    value={newAdditionalChannel}
+                                    onChange={(e) => setNewAdditionalChannel(e.target.value)}
+                                    placeholder="-100xxxxxxxxxx"
+                                    className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm"
+                                />
+                                <button
+                                    onClick={handleAddChannel}
+                                    disabled={isAddingChannel}
+                                    className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors"
+                                >
+                                    {isAddingChannel ? <SpinnerGap className="w-5 h-5 animate-spin" /> : <Plus weight="bold" className="w-5 h-5" />}
+                                </button>
+                            </div>
+                            {channelError && (
+                                <p className="text-red-400 text-sm mb-3">{channelError}</p>
+                            )}
+
+                            {/* Channel List */}
+                            {additionalChannels.length > 0 && (
+                                <div className="space-y-2 max-h-24 overflow-y-auto">
+                                    {additionalChannels.map((ch, index) => (
+                                        <div key={ch.id} className="flex items-center justify-between px-3 py-2 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-purple-400 text-sm font-mono">{ch.channelId}</span>
+                                                {ch.name && <span className="text-gray-400 text-xs">({ch.name})</span>}
+                                            </div>
+                                            <button
+                                                onClick={() => handleRemoveChannel(ch.id)}
+                                                className="p-1 hover:bg-red-500/20 rounded text-gray-400 hover:text-red-400 transition-colors"
+                                                title="Remove channel"
+                                            >
+                                                <Trash weight="duotone" className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="pt-4 border-t border-white/10">
                             <p className="text-xs text-gray-500 text-center">
-                                More bots = faster uploads/downloads (20 msg/min per bot)
+                                {bots.length} bot{bots.length !== 1 ? 's' : ''} × {1 + additionalChannels.length} channel{additionalChannels.length !== 0 ? 's' : ''} = {bots.length * (1 + additionalChannels.length) * 20} msg/min max
                             </p>
                         </div>
                     </div>
