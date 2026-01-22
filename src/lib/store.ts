@@ -4,6 +4,8 @@ import { authApi, telegramApi } from './api';
 interface User {
     id: string;
     email: string;
+    name?: string;
+    picture?: string;
     createdAt: string;
     hasTelegramConfig: boolean;
     useSystemBots?: boolean;
@@ -16,8 +18,7 @@ interface AuthState {
     isLoading: boolean;
     isAuthenticated: boolean;
 
-    login: (email: string, password: string) => Promise<void>;
-    register: (email: string, password: string) => Promise<void>;
+    googleSignIn: (credential: string) => Promise<void>;
     logout: () => void;
     checkAuth: () => Promise<void>;
 }
@@ -28,16 +29,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     isLoading: true,
     isAuthenticated: false,
 
-    login: async (email: string, password: string) => {
-        const response = await authApi.login(email, password);
-        const { user, token } = response.data;
-
-        localStorage.setItem('token', token);
-        set({ user, token, isAuthenticated: true, isLoading: false });
-    },
-
-    register: async (email: string, password: string) => {
-        const response = await authApi.register(email, password);
+    googleSignIn: async (credential: string) => {
+        const response = await authApi.googleSignIn(credential);
         const { user, token } = response.data;
 
         localStorage.setItem('token', token);

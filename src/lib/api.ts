@@ -34,13 +34,11 @@ api.interceptors.response.use(
     }
 );
 
-// Auth API
+// Auth API - Google Sign-In
 export const authApi = {
-    register: (email: string, password: string) =>
-        api.post('/auth/register', { email, password }),
-
-    login: (email: string, password: string) =>
-        api.post('/auth/login', { email, password }),
+    // Sign in with Google ID token
+    googleSignIn: (credential: string) =>
+        api.post('/auth/google', { credential }),
 
     getMe: () => api.get('/auth/me'),
 };
