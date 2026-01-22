@@ -466,10 +466,9 @@ export default function DashboardPage() {
                 let completedChunks = 0;
                 let uploadedBytes = 0;
 
-                // Upload chunks with balanced concurrency
-                // Too many concurrent uploads can cause network congestion/timeouts
-                // 6 is a good balance: 2x faster than original while staying stable
-                const MAX_CONCURRENT = 6;
+                // Upload chunks with configurable concurrency
+                // Set NEXT_PUBLIC_MAX_CONCURRENT_UPLOADS in .env (default: 4)
+                const MAX_CONCURRENT = parseInt(process.env.NEXT_PUBLIC_MAX_CONCURRENT_UPLOADS || '4', 4);
                 const chunkQueue = [...chunks.map((chunk, index) => ({ chunk, index }))];
                 const activeUploads: Promise<void>[] = [];
 
