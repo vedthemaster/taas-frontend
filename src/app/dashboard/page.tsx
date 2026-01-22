@@ -466,9 +466,10 @@ export default function DashboardPage() {
                 let completedChunks = 0;
                 let uploadedBytes = 0;
 
-                // Upload chunks with high concurrency to utilize all bot+channel slots
-                // With 4 bots × 3 channels = 12 slots, we can do up to 12 concurrent uploads
-                const MAX_CONCURRENT = 10;
+                // Upload chunks with balanced concurrency
+                // Too many concurrent uploads can cause network congestion/timeouts
+                // 6 is a good balance: 2x faster than original while staying stable
+                const MAX_CONCURRENT = 6;
                 const chunkQueue = [...chunks.map((chunk, index) => ({ chunk, index }))];
                 const activeUploads: Promise<void>[] = [];
 
