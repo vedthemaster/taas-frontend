@@ -7,7 +7,8 @@ import {
     ArrowRight,
     SpinnerGap,
     CheckCircle,
-    ArrowSquareOut
+    ArrowSquareOut,
+    SkipForward
 } from '@phosphor-icons/react';
 import { telegramApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
@@ -18,10 +19,9 @@ export default function SetupPage() {
 
     const [botToken, setBotToken] = useState('');
     const [channelId, setChannelId] = useState('');
-    const [apiId, setApiId] = useState('');
-    const [apiHash, setApiHash] = useState('');
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [isSkipping, setIsSkipping] = useState(false);
     const [step, setStep] = useState<'form' | 'validating' | 'success'>('form');
 
     useEffect(() => {
@@ -55,22 +55,33 @@ export default function SetupPage() {
         setStep('validating');
 
         try {
-            await telegramApi.setup(botToken, channelId, apiId, apiHash);
-            const validateResponse = await telegramApi.validate();
-
-            if (validateResponse.data.valid) {
-                setStep('success');
-                setTimeout(() => {
-                    router.push('/dashboard');
-                }, 2000);
-            } else {
-                throw new Error(validateResponse.data.error || 'Validation failed');
-            }
+            await telegramApi.setup(botToken, channelId);
+            setStep('success');
+            setTimeout(() => {
+                router.push('/dashboard');
+            }, 2000);
         } catch (err: any) {
             setError(err.response?.data?.error || err.message || 'Failed to setup Telegram');
             setStep('form');
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handleSkip = async () => {
+        setError('');
+        setIsSkipping(true);
+
+        try {
+            await telegramApi.skipSetup();
+            setStep('success');
+            setTimeout(() => {
+                router.push('/dashboard');
+            }, 2000);
+        } catch (err: any) {
+            setError(err.response?.data?.error || err.message || 'Failed to skip setup');
+        } finally {
+            setIsSkipping(false);
         }
     };
 
@@ -101,14 +112,14 @@ export default function SetupPage() {
                 <div className="glass-card p-6">
                     <div className="mb-4">
                         <h2 className="text-xl font-medium mb-1">Connect Telegram</h2>
-                        <p className="text-gray-500 text-sm">Configure your bot and channel</p>
+                        <p className="text-gray-500 text-sm">Set up your own bot and channel for unlimited storage</p>
                     </div>
 
                     {/* Instructions */}
                     <div className="mb-4 text-xs text-gray-500 space-y-1">
                         <p>1. Create a bot via <a href="https://t.me/BotFather" target="_blank" className="text-gray-400 hover:text-white inline-flex items-center gap-1">@BotFather <ArrowSquareOut weight="bold" className="w-3 h-3" /></a></p>
                         <p>2. Create a channel and add your bot as admin</p>
-                        <p>3. Get API credentials from <a href="https://my.telegram.org" target="_blank" className="text-gray-400 hover:text-white inline-flex items-center gap-1">my.telegram.org <ArrowSquareOut weight="bold" className="w-3 h-3" /></a></p>
+                        <p>3. Get channel ID (numeric ID starting with -100)</p>
                     </div>
 
                     <form onSubmit={handleSubmit} className="space-y-4">
@@ -147,39 +158,9 @@ export default function SetupPage() {
                             <p className="text-xs text-gray-600 mt-1">Numeric ID starting with -100</p>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-1">
-                                <label htmlFor="apiId" className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                    API ID
-                                </label>
-                                <input
-                                    id="apiId"
-                                    type="text"
-                                    value={apiId}
-                                    onChange={(e) => setApiId(e.target.value)}
-                                    placeholder="12345678"
-                                    required
-                                />
-                            </div>
-
-                            <div className="space-y-1">
-                                <label htmlFor="apiHash" className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                    API Hash
-                                </label>
-                                <input
-                                    id="apiHash"
-                                    type="text"
-                                    value={apiHash}
-                                    onChange={(e) => setApiHash(e.target.value)}
-                                    placeholder="abc123..."
-                                    required
-                                />
-                            </div>
-                        </div>
-
                         <button
                             type="submit"
-                            disabled={isLoading}
+                            disabled={isLoading || isSkipping}
                             className="btn-primary w-full mt-4"
                         >
                             {isLoading ? (
@@ -195,6 +176,38 @@ export default function SetupPage() {
                             )}
                         </button>
                     </form>
+
+                    {/* Divider */}
+                    <div className="relative my-6">
+                        <div className="absolute inset-0 flex items-center">
+                            <div className="w-full border-t border-white/10"></div>
+                        </div>
+                        <div className="relative flex justify-center text-sm">
+                            <span className="px-2 bg-[#0d1117] text-gray-500">or</span>
+                        </div>
+                    </div>
+
+                    {/* Skip button */}
+                    <button
+                        onClick={handleSkip}
+                        disabled={isLoading || isSkipping}
+                        className="btn-secondary w-full flex items-center justify-center gap-2"
+                    >
+                        {isSkipping ? (
+                            <>
+                                <SpinnerGap weight="bold" className="w-5 h-5 animate-spin" />
+                                <span>Setting up...</span>
+                            </>
+                        ) : (
+                            <>
+                                <SkipForward weight="bold" className="w-4 h-4" />
+                                <span>Skip for now (100MB/file limit)</span>
+                            </>
+                        )}
+                    </button>
+                    <p className="text-xs text-gray-600 mt-2 text-center">
+                        Use shared system bots with 100MB per file limit. You can set up your own bots later in Settings.
+                    </p>
                 </div>
             </div>
         </div>

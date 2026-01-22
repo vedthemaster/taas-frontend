@@ -35,7 +35,7 @@ import {
     List
 } from '@phosphor-icons/react';
 import { useAuthStore, useFolderStore } from '@/lib/store';
-import { fileApi, folderApi, chunkedUploadApi, splitFileIntoChunks, CHUNK_THRESHOLD, botApi } from '@/lib/api';
+import { fileApi, folderApi, chunkedUploadApi, splitFileIntoChunks, CHUNK_THRESHOLD, botApi, channelApi, streamingDownload } from '@/lib/api';
 
 // File icon helper
 const getFileIcon = (mimeType: string) => {
@@ -192,6 +192,7 @@ export default function DashboardPage() {
         totalBytes: number;
         status: 'uploading' | 'complete' | 'error';
         uploadId?: string;
+        error?: string;
     }
 
     const [showNewFolderModal, setShowNewFolderModal] = useState(false);
@@ -246,6 +247,12 @@ export default function DashboardPage() {
     const [isAddingBot, setIsAddingBot] = useState(false);
     const [botError, setBotError] = useState('');
 
+    // Channel management state (additional channels for throughput)
+    const [additionalChannels, setAdditionalChannels] = useState<Array<{ id: string; channelId: string; name: string | null; isActive: boolean }>>([]);
+    const [newAdditionalChannel, setNewAdditionalChannel] = useState('');
+    const [isAddingChannel, setIsAddingChannel] = useState(false);
+    const [channelError, setChannelError] = useState('');
+
     // Search and sort state
     const [searchQuery, setSearchQuery] = useState('');
     const [sortBy, setSortBy] = useState<'name' | 'date' | 'size'>('name');
@@ -278,6 +285,14 @@ export default function DashboardPage() {
             setBots(response.data.bots || []);
             setChannelId(response.data.channelId || '');
             setNewChannelId(response.data.channelId || '');
+
+            // Also load additional channels
+            try {
+                const channelResponse = await channelApi.getAll();
+                setAdditionalChannels(channelResponse.data.channels || []);
+            } catch (e) {
+                console.error('Failed to load channels:', e);
+            }
         } catch (error) {
             console.error('Failed to load bots:', error);
         }
@@ -325,6 +340,37 @@ export default function DashboardPage() {
         }
     };
 
+    // Add an additional channel for throughput
+    const handleAddChannel = async () => {
+        if (!newAdditionalChannel.trim()) {
+            setChannelError('Channel ID is required');
+            return;
+        }
+
+        setIsAddingChannel(true);
+        setChannelError('');
+
+        try {
+            await channelApi.add(newAdditionalChannel.trim());
+            setNewAdditionalChannel('');
+            await loadBots(); // Reloads channels too
+        } catch (error: any) {
+            setChannelError(error.response?.data?.error || error.response?.data?.details || 'Failed to add channel');
+        } finally {
+            setIsAddingChannel(false);
+        }
+    };
+
+    // Remove an additional channel
+    const handleRemoveChannel = async (channelDbId: string) => {
+        try {
+            await channelApi.remove(channelDbId);
+            await loadBots(); // Reloads channels too
+        } catch (error) {
+            console.error('Failed to remove channel:', error);
+        }
+    };
+
     useEffect(() => {
         checkAuth();
     }, []);
@@ -365,6 +411,29 @@ export default function DashboardPage() {
         if (!file) {
             isUploadingRef.current = false;
             return;
+        }
+
+        // Check file size limit for system bot users
+        // Only enforce limit if user is explicitly using system bots
+        if (user?.useSystemBots) {
+            const maxSize = user.maxUploadSize || (100 * 1024 * 1024); // Default 100MB for system bot users
+            if (file.size > maxSize) {
+                const limitMB = Math.round(maxSize / (1024 * 1024));
+                setActiveUpload({
+                    fileName: file.name,
+                    progress: 0,
+                    uploadedBytes: 0,
+                    totalBytes: file.size,
+                    status: 'error',
+                    error: `File size exceeds ${limitMB}MB per file limit. Set up your own bot in Settings to upload larger files.`
+                });
+                // Process next file after delay
+                setTimeout(() => {
+                    setActiveUpload(null);
+                    isUploadingRef.current = false;
+                }, 3000);
+                return;
+            }
         }
 
         uploadAbortRef.current = false;
@@ -571,12 +640,9 @@ export default function DashboardPage() {
         }
     };
 
-    // Execute actual download
-    const executeDownload = (fileId: string, fileName: string, fileSize: number) => {
+    // Execute actual download using File System Access API
+    const executeDownload = async (fileId: string, fileName: string, fileSize: number) => {
         try {
-            const xhr = new XMLHttpRequest();
-            const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-
             setDownloadProgress({
                 fileName,
                 loaded: 0,
@@ -584,48 +650,25 @@ export default function DashboardPage() {
                 percent: 0,
             });
 
-            xhr.open('GET', `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/files/${fileId}/download`);
-            if (token) {
-                xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+            await streamingDownload(fileId, fileName, fileSize, (loaded, total) => {
+                const percent = Math.round((loaded / total) * 100);
+                setDownloadProgress({
+                    fileName,
+                    loaded,
+                    total,
+                    percent,
+                });
+            });
+
+            setDownloadProgress(null);
+            processNextDownload();
+        } catch (error: any) {
+            // User cancelled save dialog
+            if (error.name === 'AbortError') {
+                setDownloadProgress(null);
+                processNextDownload();
+                return;
             }
-            xhr.responseType = 'blob';
-
-            xhr.onprogress = (event) => {
-                if (event.lengthComputable) {
-                    const percent = Math.round((event.loaded / event.total) * 100);
-                    setDownloadProgress({
-                        fileName,
-                        loaded: event.loaded,
-                        total: event.total,
-                        percent,
-                    });
-                }
-            };
-
-            xhr.onload = () => {
-                if (xhr.status === 200) {
-                    const blob = xhr.response;
-                    const url = window.URL.createObjectURL(blob);
-                    const link = document.createElement('a');
-                    link.href = url;
-                    link.setAttribute('download', fileName);
-                    document.body.appendChild(link);
-                    link.click();
-                    link.remove();
-                    window.URL.revokeObjectURL(url);
-                }
-                setDownloadProgress(null);
-                processNextDownload();
-            };
-
-            xhr.onerror = () => {
-                console.error('Download failed');
-                setDownloadProgress(null);
-                processNextDownload();
-            };
-
-            xhr.send();
-        } catch (error) {
             console.error('Failed to download file:', error);
             setDownloadProgress(null);
             processNextDownload();
@@ -926,124 +969,192 @@ export default function DashboardPage() {
 
             {/* Main content */}
             <main className="flex-1 flex flex-col overflow-hidden lg:ml-0">
-                {/* Header */}
-                <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between px-4 lg:px-6 py-3 lg:py-4 border-b border-white/5 gap-3">
-                    {/* Top row: Hamburger + Breadcrumbs + Upload */}
-                    <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-3">
-                            {/* Hamburger menu for mobile */}
+                {/* Header - Desktop: original single row layout, Mobile: stacked */}
+                <header className="border-b border-white/5">
+                    {/* Desktop header - hidden on mobile */}
+                    <div className="hidden lg:flex items-center justify-between px-6 py-4">
+                        {/* Breadcrumbs */}
+                        <div className="flex items-center gap-2 text-sm">
                             <button
-                                onClick={() => setIsSidebarOpen(true)}
-                                className="lg:hidden p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white"
+                                onClick={() => setCurrentFolder(null)}
+                                className="text-gray-400 hover:text-white"
                             >
-                                <List weight="bold" className="w-5 h-5" />
+                                All Files
                             </button>
+                            {breadcrumbs.map((crumb, index) => (
+                                <span key={crumb.id} className="flex items-center gap-2">
+                                    <CaretRight weight="bold" className="w-4 h-4 text-gray-600" />
+                                    <button
+                                        onClick={() => setCurrentFolder(crumb.id)}
+                                        className={index === breadcrumbs.length - 1 ? 'text-white' : 'text-gray-400 hover:text-white'}
+                                    >
+                                        {crumb.name}
+                                    </button>
+                                </span>
+                            ))}
+                        </div>
 
-                            {/* Breadcrumbs */}
-                            <div className="flex items-center gap-2 text-sm">
-                                <button
-                                    onClick={() => setCurrentFolder(null)}
-                                    className="text-gray-400 hover:text-white"
+                        {/* Search and Sort */}
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="text"
+                                placeholder="Search..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500/50 focus:outline-none w-48"
+                            />
+                            <div className="relative">
+                                <select
+                                    value={`${sortBy}-${sortOrder}`}
+                                    onChange={(e) => {
+                                        const [newSortBy, newSortOrder] = e.target.value.split('-') as ['name' | 'date' | 'size', 'asc' | 'desc'];
+                                        setSortBy(newSortBy);
+                                        setSortOrder(newSortOrder);
+                                    }}
+                                    className="appearance-none pl-3 pr-8 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:border-blue-500/50 focus:outline-none cursor-pointer"
                                 >
-                                    All Files
-                                </button>
-                                {breadcrumbs.map((crumb, index) => (
-                                    <span key={crumb.id} className="flex items-center gap-2">
-                                        <CaretRight weight="bold" className="w-4 h-4 text-gray-600" />
-                                        <button
-                                            onClick={() => setCurrentFolder(crumb.id)}
-                                            className={`truncate max-w-[80px] lg:max-w-none ${index === breadcrumbs.length - 1 ? 'text-white' : 'text-gray-400 hover:text-white'}`}
-                                        >
-                                            {crumb.name}
-                                        </button>
-                                    </span>
-                                ))}
+                                    <option value="name-asc" className="bg-gray-800">Name (A-Z)</option>
+                                    <option value="name-desc" className="bg-gray-800">Name (Z-A)</option>
+                                    <option value="date-desc" className="bg-gray-800">Date (Newest)</option>
+                                    <option value="date-asc" className="bg-gray-800">Date (Oldest)</option>
+                                    <option value="size-desc" className="bg-gray-800">Size (Largest)</option>
+                                    <option value="size-asc" className="bg-gray-800">Size (Smallest)</option>
+                                </select>
+                                <SortAscending weight="bold" className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                             </div>
                         </div>
 
-                        {/* Mobile: Upload button only */}
-                        <label className="lg:hidden btn-primary flex items-center gap-2 text-sm py-2 px-3 cursor-pointer">
-                            <Upload weight="duotone" className="w-4 h-4" />
-                            <span className="hidden sm:inline">Upload</span>
-                            <input
-                                type="file"
-                                multiple
-                                className="hidden"
-                                onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
-                            />
-                        </label>
+                        {/* Actions */}
+                        <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-1 p-1 bg-white/5 rounded-lg">
+                                <button
+                                    onClick={() => setViewMode('grid')}
+                                    className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
+                                    title="Grid view"
+                                >
+                                    <SquaresFour weight={viewMode === 'grid' ? 'fill' : 'regular'} className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={() => setViewMode('list')}
+                                    className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
+                                    title="List view"
+                                >
+                                    <ListIcon weight={viewMode === 'list' ? 'fill' : 'regular'} className="w-4 h-4" />
+                                </button>
+                            </div>
+                            <button
+                                onClick={() => setShowNewFolderModal(true)}
+                                className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
+                            >
+                                <FolderPlus weight="duotone" className="w-4 h-4" />
+                                New Folder
+                            </button>
+                            <label className="btn-primary flex items-center gap-2 text-sm py-2 px-4 cursor-pointer">
+                                <Upload weight="duotone" className="w-4 h-4" />
+                                Upload
+                                <input
+                                    type="file"
+                                    multiple
+                                    className="hidden"
+                                    onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
+                                />
+                            </label>
+                        </div>
                     </div>
 
-                    {/* Bottom row on mobile / Right side on desktop: Search, Sort, Actions */}
-                    <div className="flex items-center gap-2 lg:gap-3 overflow-x-auto">
-                        {/* Search */}
-                        <input
-                            type="text"
-                            placeholder="Search..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="flex-1 lg:flex-none px-3 lg:px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500/50 focus:outline-none w-full lg:w-48"
-                        />
-
-                        {/* Sort dropdown - hidden on very small screens */}
-                        <div className="relative hidden sm:block">
-                            <select
-                                value={`${sortBy}-${sortOrder}`}
-                                onChange={(e) => {
-                                    const [newSortBy, newSortOrder] = e.target.value.split('-') as ['name' | 'date' | 'size', 'asc' | 'desc'];
-                                    setSortBy(newSortBy);
-                                    setSortOrder(newSortOrder);
-                                }}
-                                className="appearance-none pl-3 pr-8 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:border-blue-500/50 focus:outline-none cursor-pointer"
-                            >
-                                <option value="name-asc" className="bg-gray-800">Name (A-Z)</option>
-                                <option value="name-desc" className="bg-gray-800">Name (Z-A)</option>
-                                <option value="date-desc" className="bg-gray-800">Date (Newest)</option>
-                                <option value="date-asc" className="bg-gray-800">Date (Oldest)</option>
-                                <option value="size-desc" className="bg-gray-800">Size (Largest)</option>
-                                <option value="size-asc" className="bg-gray-800">Size (Smallest)</option>
-                            </select>
-                            <SortAscending weight="bold" className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                    {/* Mobile header */}
+                    <div className="lg:hidden px-4 py-3 space-y-3">
+                        {/* Top row: Hamburger + Breadcrumbs + Upload */}
+                        <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={() => setIsSidebarOpen(true)}
+                                    className="p-2 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white"
+                                >
+                                    <List weight="bold" className="w-5 h-5" />
+                                </button>
+                                <div className="flex items-center gap-2 text-sm">
+                                    <button
+                                        onClick={() => setCurrentFolder(null)}
+                                        className="text-gray-400 hover:text-white"
+                                    >
+                                        All Files
+                                    </button>
+                                    {breadcrumbs.map((crumb, index) => (
+                                        <span key={crumb.id} className="flex items-center gap-2">
+                                            <CaretRight weight="bold" className="w-4 h-4 text-gray-600" />
+                                            <button
+                                                onClick={() => setCurrentFolder(crumb.id)}
+                                                className={`truncate max-w-[80px] ${index === breadcrumbs.length - 1 ? 'text-white' : 'text-gray-400 hover:text-white'}`}
+                                            >
+                                                {crumb.name}
+                                            </button>
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                            <label className="btn-primary flex items-center gap-2 text-sm py-2 px-3 cursor-pointer">
+                                <Upload weight="duotone" className="w-4 h-4" />
+                                <span className="hidden sm:inline">Upload</span>
+                                <input
+                                    type="file"
+                                    multiple
+                                    className="hidden"
+                                    onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
+                                />
+                            </label>
                         </div>
 
-                        {/* View mode toggle */}
-                        <div className="flex items-center gap-1 p-1 bg-white/5 rounded-lg flex-shrink-0">
-                            <button
-                                onClick={() => setViewMode('grid')}
-                                className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
-                                title="Grid view"
-                            >
-                                <SquaresFour weight={viewMode === 'grid' ? 'fill' : 'regular'} className="w-4 h-4" />
-                            </button>
-                            <button
-                                onClick={() => setViewMode('list')}
-                                className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
-                                title="List view"
-                            >
-                                <ListIcon weight={viewMode === 'list' ? 'fill' : 'regular'} className="w-4 h-4" />
-                            </button>
-                        </div>
-
-                        {/* Desktop only: New Folder and Upload buttons */}
-                        <button
-                            onClick={() => setShowNewFolderModal(true)}
-                            className="hidden lg:flex btn-secondary items-center gap-2 text-sm py-2 px-4"
-                        >
-                            <FolderPlus weight="duotone" className="w-4 h-4" />
-                            New Folder
-                        </button>
-                        <label className="hidden lg:flex btn-primary items-center gap-2 text-sm py-2 px-4 cursor-pointer">
-                            <Upload weight="duotone" className="w-4 h-4" />
-                            Upload
+                        {/* Bottom row: Search + View toggle */}
+                        <div className="flex items-center gap-2">
                             <input
-                                type="file"
-                                multiple
-                                className="hidden"
-                                onChange={(e) => e.target.files && handleFileUpload(e.target.files)}
+                                type="text"
+                                placeholder="Search..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="flex-1 min-w-0 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-gray-500 focus:border-blue-500/50 focus:outline-none"
                             />
-                        </label>
+                            <div className="flex items-center gap-1 p-1 bg-white/5 rounded-lg flex-shrink-0">
+                                <button
+                                    onClick={() => setViewMode('grid')}
+                                    className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
+                                    title="Grid view"
+                                >
+                                    <SquaresFour weight={viewMode === 'grid' ? 'fill' : 'regular'} className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={() => setViewMode('list')}
+                                    className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white/10 text-white' : 'text-gray-400 hover:text-white'}`}
+                                    title="List view"
+                                >
+                                    <ListIcon weight={viewMode === 'list' ? 'fill' : 'regular'} className="w-4 h-4" />
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </header>
+
+                {/* System bots warning banner */}
+                {user?.useSystemBots && (
+                    <div className="px-4 lg:px-6 py-3 bg-gradient-to-r from-amber-500/10 to-orange-500/10 border-b border-amber-500/20">
+                        <div className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                                <p className="text-sm text-amber-200">
+                                    <span className="font-medium">100MB per file limit active.</span>
+                                    <span className="text-amber-300/80 ml-1 hidden sm:inline">Set up your own bot and channel to upload files up to 2GB each.</span>
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowBotModal(true)}
+                                className="text-sm text-amber-300 hover:text-amber-200 font-medium flex items-center gap-1 flex-shrink-0"
+                            >
+                                Settings
+                                <ArrowRight weight="bold" className="w-4 h-4" />
+                            </button>
+                        </div>
+                    </div>
+                )}
 
                 {/* Selection toolbar */}
                 {isSelectionMode && (
@@ -1609,12 +1720,12 @@ export default function DashboardPage() {
                         </div>
 
                         {/* Bot List */}
-                        <div>
+                        <div className="mb-6">
                             <h3 className="text-sm font-medium text-gray-300 mb-3">Configured Bots ({bots.length})</h3>
                             {bots.length === 0 ? (
                                 <p className="text-gray-500 text-sm py-4 text-center">No bots configured. Add your first bot above.</p>
                             ) : (
-                                <div className="space-y-2 max-h-48 overflow-y-auto">
+                                <div className="space-y-2 max-h-32 overflow-y-auto">
                                     {bots.map((bot, index) => (
                                         <div key={bot.id} className="flex items-center justify-between px-4 py-3 bg-white/5 rounded-xl">
                                             <div className="flex items-center gap-3">
@@ -1643,9 +1754,61 @@ export default function DashboardPage() {
                             )}
                         </div>
 
-                        <div className="mt-6 pt-4 border-t border-white/10">
+                        {/* Additional Channels for Throughput */}
+                        <div className="border-t border-white/10 pt-6 mb-6">
+                            <h3 className="text-sm font-medium text-gray-300 mb-2">
+                                Additional Channels <span className="text-xs text-gray-500">(for faster uploads)</span>
+                            </h3>
+                            <p className="text-xs text-gray-500 mb-3">
+                                Add more channels to increase upload speed. Each bot can send 20 msg/min per channel.
+                            </p>
+
+                            {/* Add Channel */}
+                            <div className="flex gap-2 mb-3">
+                                <input
+                                    type="text"
+                                    value={newAdditionalChannel}
+                                    onChange={(e) => setNewAdditionalChannel(e.target.value)}
+                                    placeholder="-100xxxxxxxxxx"
+                                    className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm"
+                                />
+                                <button
+                                    onClick={handleAddChannel}
+                                    disabled={isAddingChannel}
+                                    className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors"
+                                >
+                                    {isAddingChannel ? <SpinnerGap className="w-5 h-5 animate-spin" /> : <Plus weight="bold" className="w-5 h-5" />}
+                                </button>
+                            </div>
+                            {channelError && (
+                                <p className="text-red-400 text-sm mb-3">{channelError}</p>
+                            )}
+
+                            {/* Channel List */}
+                            {additionalChannels.length > 0 && (
+                                <div className="space-y-2 max-h-24 overflow-y-auto">
+                                    {additionalChannels.map((ch, index) => (
+                                        <div key={ch.id} className="flex items-center justify-between px-3 py-2 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-purple-400 text-sm font-mono">{ch.channelId}</span>
+                                                {ch.name && <span className="text-gray-400 text-xs">({ch.name})</span>}
+                                            </div>
+                                            <button
+                                                onClick={() => handleRemoveChannel(ch.id)}
+                                                className="p-1 hover:bg-red-500/20 rounded text-gray-400 hover:text-red-400 transition-colors"
+                                                title="Remove channel"
+                                            >
+                                                <Trash weight="duotone" className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="pt-4 border-t border-white/10">
                             <p className="text-xs text-gray-500 text-center">
-                                More bots = faster uploads/downloads (20 msg/min per bot)
+                                {bots.length} bot{bots.length !== 1 ? 's' : ''} × {1 + additionalChannels.length} channel{additionalChannels.length !== 0 ? 's' : ''} = {bots.length * (1 + additionalChannels.length) * 20} msg/min max
                             </p>
                         </div>
                     </div>
