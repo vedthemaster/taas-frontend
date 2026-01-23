@@ -468,7 +468,7 @@ export default function DashboardPage() {
 
                 // Upload chunks with configurable concurrency
                 // Set NEXT_PUBLIC_MAX_CONCURRENT_UPLOADS in .env (default: 4)
-                const MAX_CONCURRENT = parseInt(process.env.NEXT_PUBLIC_MAX_CONCURRENT_UPLOADS || '4', 4);
+                const MAX_CONCURRENT = parseInt(process.env.NEXT_PUBLIC_MAX_CONCURRENT_UPLOADS || '4', 10);
                 const chunkQueue = [...chunks.map((chunk, index) => ({ chunk, index }))];
                 const activeUploads: Promise<void>[] = [];
 
