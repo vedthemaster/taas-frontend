@@ -1143,7 +1143,7 @@ export default function DashboardPage() {
                                 <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
                                 <p className="text-sm text-amber-200">
                                     <span className="font-medium">100MB per file limit active.</span>
-                                    <span className="text-amber-300/80 ml-1 hidden sm:inline">Set up your own bot and channel to upload files up to 2GB each.</span>
+                                    <span className="text-amber-300/80 ml-1 hidden sm:inline">Set up your own bot and channel to upload files with no size limit.</span>
                                 </p>
                             </div>
                             <button
