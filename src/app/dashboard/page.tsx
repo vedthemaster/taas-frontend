@@ -1675,6 +1675,41 @@ export default function DashboardPage() {
                         </div>
                         <div className="overflow-y-auto flex-1 -mx-6 px-6">
 
+                            {/* Setup Guide */}
+                            <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                                <h3 className="text-sm font-semibold text-blue-300 mb-3">📋 Setup Guide</h3>
+
+                                <div className="space-y-3 text-xs text-gray-300">
+                                    <div>
+                                        <p className="font-medium text-white mb-1">1. Create a Bot Token:</p>
+                                        <p className="text-gray-400">
+                                            Open <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">@BotFather</a> on Telegram → Send <code className="bg-white/10 px-1 rounded">/newbot</code> → Follow the prompts → Copy the token
+                                        </p>
+                                    </div>
+
+                                    <div>
+                                        <p className="font-medium text-white mb-1">2. Get Channel ID:</p>
+                                        <p className="text-gray-400">
+                                            Open <a href="https://t.me/chat_id_echo_bot" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">@chat_id_echo_bot</a> → Select your channel from the list → Copy the ID (starts with -100)
+                                        </p>
+                                    </div>
+
+                                    <div>
+                                        <p className="font-medium text-white mb-1">3. Add Bots to Channel:</p>
+                                        <p className="text-gray-400">
+                                            Add each bot as an <span className="text-amber-400 font-medium">Admin</span> to your channel with permission to post messages
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="mt-3 pt-3 border-t border-blue-500/20">
+                                    <p className="text-xs text-amber-300 flex items-start gap-2">
+                                        <span className="text-amber-400">⚠️</span>
+                                        <span><strong>Important:</strong> All bots must be added as admins to ALL channels you configure below.</span>
+                                    </p>
+                                </div>
+                            </div>
+
                             {/* Channel ID */}
                             <div className="mb-6">
                                 <label className="block text-sm font-medium text-gray-300 mb-2">Channel ID</label>
