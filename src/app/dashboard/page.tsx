@@ -1661,8 +1661,8 @@ export default function DashboardPage() {
             {/* Bot Management Modal */}
             {showBotModal && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-gradient-to-b from-gray-900 to-gray-950 border border-white/10 rounded-2xl p-6 max-w-md w-full shadow-2xl">
-                        <div className="flex items-center justify-between mb-6">
+                    <div className="bg-gradient-to-b from-gray-900 to-gray-950 border border-white/10 rounded-2xl p-6 max-w-md w-full shadow-2xl max-h-[90vh] flex flex-col">
+                        <div className="flex items-center justify-between mb-6 flex-shrink-0">
                             <h2 className="text-xl font-bold bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent">
                                 Bot Settings
                             </h2>
@@ -1673,141 +1673,180 @@ export default function DashboardPage() {
                                 <X weight="bold" className="w-5 h-5" />
                             </button>
                         </div>
+                        <div className="overflow-y-auto flex-1 -mx-6 px-6">
 
-                        {/* Channel ID */}
-                        <div className="mb-6">
-                            <label className="block text-sm font-medium text-gray-300 mb-2">Channel ID</label>
-                            <div className="flex gap-2">
-                                <input
-                                    type="text"
-                                    value={newChannelId}
-                                    onChange={(e) => setNewChannelId(e.target.value)}
-                                    placeholder="-100xxxxxxxxxx"
-                                    className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                                />
-                                {channelId !== newChannelId && (
+                            {/* Setup Guide */}
+                            <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                                <h3 className="text-sm font-semibold text-blue-300 mb-3">📋 Setup Guide</h3>
+
+                                <div className="space-y-3 text-xs text-gray-300">
+                                    <div>
+                                        <p className="font-medium text-white mb-1">1. Create a Bot Token:</p>
+                                        <p className="text-gray-400">
+                                            Open <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">@BotFather</a> on Telegram → Send <code className="bg-white/10 px-1 rounded">/newbot</code> → Follow the prompts → Copy the token
+                                        </p>
+                                    </div>
+
+                                    <div>
+                                        <p className="font-medium text-white mb-1">2. Get Channel ID:</p>
+                                        <p className="text-gray-400">
+                                            Open <a href="https://t.me/chat_id_echo_bot" target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 underline">@chat_id_echo_bot</a> → Select your channel from the list → Copy the ID (starts with -100)
+                                        </p>
+                                    </div>
+
+                                    <div>
+                                        <p className="font-medium text-white mb-1">3. Add Bots to Channel:</p>
+                                        <p className="text-gray-400">
+                                            Add each bot as an <span className="text-amber-400 font-medium">Admin</span> to your channel with permission to post messages
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="mt-3 pt-3 border-t border-blue-500/20">
+                                    <p className="text-xs text-amber-300 flex items-start gap-2">
+                                        <span className="text-amber-400">⚠️</span>
+                                        <span><strong>Important:</strong> All bots must be added as admins to ALL channels you configure below.</span>
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Channel ID */}
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-300 mb-2">Channel ID</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={newChannelId}
+                                        onChange={(e) => setNewChannelId(e.target.value)}
+                                        placeholder="-100xxxxxxxxxx"
+                                        className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                                    />
+                                    {channelId !== newChannelId && (
+                                        <button
+                                            onClick={handleUpdateChannel}
+                                            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-colors"
+                                        >
+                                            Save
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Add Bot */}
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-300 mb-2">Add Bot Token</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={newBotToken}
+                                        onChange={(e) => setNewBotToken(e.target.value)}
+                                        placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+                                        className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                                    />
                                     <button
-                                        onClick={handleUpdateChannel}
-                                        className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-medium transition-colors"
+                                        onClick={handleAddBot}
+                                        disabled={isAddingBot}
+                                        className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors"
                                     >
-                                        Save
+                                        {isAddingBot ? <SpinnerGap className="w-5 h-5 animate-spin" /> : <Plus weight="bold" className="w-5 h-5" />}
                                     </button>
+                                </div>
+                                {botError && (
+                                    <p className="text-red-400 text-sm mt-2">{botError}</p>
                                 )}
                             </div>
-                        </div>
 
-                        {/* Add Bot */}
-                        <div className="mb-6">
-                            <label className="block text-sm font-medium text-gray-300 mb-2">Add Bot Token</label>
-                            <div className="flex gap-2">
-                                <input
-                                    type="text"
-                                    value={newBotToken}
-                                    onChange={(e) => setNewBotToken(e.target.value)}
-                                    placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-                                    className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                                />
-                                <button
-                                    onClick={handleAddBot}
-                                    disabled={isAddingBot}
-                                    className="px-4 py-2 bg-green-600 hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors"
-                                >
-                                    {isAddingBot ? <SpinnerGap className="w-5 h-5 animate-spin" /> : <Plus weight="bold" className="w-5 h-5" />}
-                                </button>
-                            </div>
-                            {botError && (
-                                <p className="text-red-400 text-sm mt-2">{botError}</p>
-                            )}
-                        </div>
-
-                        {/* Bot List */}
-                        <div className="mb-6">
-                            <h3 className="text-sm font-medium text-gray-300 mb-3">Configured Bots ({bots.length})</h3>
-                            {bots.length === 0 ? (
-                                <p className="text-gray-500 text-sm py-4 text-center">No bots configured. Add your first bot above.</p>
-                            ) : (
-                                <div className="space-y-2 max-h-32 overflow-y-auto">
-                                    {bots.map((bot, index) => (
-                                        <div key={bot.id} className="flex items-center justify-between px-4 py-3 bg-white/5 rounded-xl">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center text-white font-bold text-sm">
-                                                    {index + 1}
+                            {/* Bot List */}
+                            <div className="mb-6">
+                                <h3 className="text-sm font-medium text-gray-300 mb-3">Configured Bots ({bots.length})</h3>
+                                {bots.length === 0 ? (
+                                    <p className="text-gray-500 text-sm py-4 text-center">No bots configured. Add your first bot above.</p>
+                                ) : (
+                                    <div className="space-y-2 max-h-32 overflow-y-auto">
+                                        {bots.map((bot, index) => (
+                                            <div key={bot.id} className="flex items-center justify-between px-4 py-3 bg-white/5 rounded-xl">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center text-white font-bold text-sm">
+                                                        {index + 1}
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-white font-medium">
+                                                            @{bot.username || 'Unknown Bot'}
+                                                        </p>
+                                                        <p className="text-xs text-gray-500">
+                                                            {bot.isActive ? '🟢 Active' : '🔴 Inactive'}
+                                                        </p>
+                                                    </div>
                                                 </div>
-                                                <div>
-                                                    <p className="text-white font-medium">
-                                                        @{bot.username || 'Unknown Bot'}
-                                                    </p>
-                                                    <p className="text-xs text-gray-500">
-                                                        {bot.isActive ? '🟢 Active' : '🔴 Inactive'}
-                                                    </p>
-                                                </div>
+                                                <button
+                                                    onClick={() => handleRemoveBot(bot.id)}
+                                                    className="p-2 hover:bg-red-500/20 rounded-lg text-gray-400 hover:text-red-400 transition-colors"
+                                                    title="Remove bot"
+                                                >
+                                                    <Trash weight="duotone" className="w-4 h-4" />
+                                                </button>
                                             </div>
-                                            <button
-                                                onClick={() => handleRemoveBot(bot.id)}
-                                                className="p-2 hover:bg-red-500/20 rounded-lg text-gray-400 hover:text-red-400 transition-colors"
-                                                title="Remove bot"
-                                            >
-                                                <Trash weight="duotone" className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Additional Channels for Throughput */}
-                        <div className="border-t border-white/10 pt-6 mb-6">
-                            <h3 className="text-sm font-medium text-gray-300 mb-2">
-                                Additional Channels <span className="text-xs text-gray-500">(for faster uploads)</span>
-                            </h3>
-                            <p className="text-xs text-gray-500 mb-3">
-                                Add more channels to increase upload speed. Each bot can send 20 msg/min per channel.
-                            </p>
-
-                            {/* Add Channel */}
-                            <div className="flex gap-2 mb-3">
-                                <input
-                                    type="text"
-                                    value={newAdditionalChannel}
-                                    onChange={(e) => setNewAdditionalChannel(e.target.value)}
-                                    placeholder="-100xxxxxxxxxx"
-                                    className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm"
-                                />
-                                <button
-                                    onClick={handleAddChannel}
-                                    disabled={isAddingChannel}
-                                    className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors"
-                                >
-                                    {isAddingChannel ? <SpinnerGap className="w-5 h-5 animate-spin" /> : <Plus weight="bold" className="w-5 h-5" />}
-                                </button>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
-                            {channelError && (
-                                <p className="text-red-400 text-sm mb-3">{channelError}</p>
-                            )}
 
-                            {/* Channel List */}
-                            {additionalChannels.length > 0 && (
-                                <div className="space-y-2 max-h-24 overflow-y-auto">
-                                    {additionalChannels.map((ch, index) => (
-                                        <div key={ch.id} className="flex items-center justify-between px-3 py-2 bg-purple-500/10 border border-purple-500/20 rounded-lg">
-                                            <div className="flex items-center gap-2">
-                                                <span className="text-purple-400 text-sm font-mono">{ch.channelId}</span>
-                                                {ch.name && <span className="text-gray-400 text-xs">({ch.name})</span>}
-                                            </div>
-                                            <button
-                                                onClick={() => handleRemoveChannel(ch.id)}
-                                                className="p-1 hover:bg-red-500/20 rounded text-gray-400 hover:text-red-400 transition-colors"
-                                                title="Remove channel"
-                                            >
-                                                <Trash weight="duotone" className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                    ))}
+                            {/* Additional Channels for Throughput */}
+                            <div className="border-t border-white/10 pt-6 mb-6">
+                                <h3 className="text-sm font-medium text-gray-300 mb-2">
+                                    Additional Channels <span className="text-xs text-gray-500">(for faster uploads)</span>
+                                </h3>
+                                <p className="text-xs text-gray-500 mb-3">
+                                    Add more channels to increase upload speed. Each bot can send 20 msg/min per channel.
+                                </p>
+
+                                {/* Add Channel */}
+                                <div className="flex gap-2 mb-3">
+                                    <input
+                                        type="text"
+                                        value={newAdditionalChannel}
+                                        onChange={(e) => setNewAdditionalChannel(e.target.value)}
+                                        placeholder="-100xxxxxxxxxx"
+                                        className="flex-1 px-4 py-2 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-sm"
+                                    />
+                                    <button
+                                        onClick={handleAddChannel}
+                                        disabled={isAddingChannel}
+                                        className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors"
+                                    >
+                                        {isAddingChannel ? <SpinnerGap className="w-5 h-5 animate-spin" /> : <Plus weight="bold" className="w-5 h-5" />}
+                                    </button>
                                 </div>
-                            )}
+                                {channelError && (
+                                    <p className="text-red-400 text-sm mb-3">{channelError}</p>
+                                )}
+
+                                {/* Channel List */}
+                                {additionalChannels.length > 0 && (
+                                    <div className="space-y-2 max-h-24 overflow-y-auto">
+                                        {additionalChannels.map((ch, index) => (
+                                            <div key={ch.id} className="flex items-center justify-between px-3 py-2 bg-purple-500/10 border border-purple-500/20 rounded-lg">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-purple-400 text-sm font-mono">{ch.channelId}</span>
+                                                    {ch.name && <span className="text-gray-400 text-xs">({ch.name})</span>}
+                                                </div>
+                                                <button
+                                                    onClick={() => handleRemoveChannel(ch.id)}
+                                                    className="p-1 hover:bg-red-500/20 rounded text-gray-400 hover:text-red-400 transition-colors"
+                                                    title="Remove channel"
+                                                >
+                                                    <Trash weight="duotone" className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Scrollable container ends here */}
                         </div>
 
-                        <div className="pt-4 border-t border-white/10">
+                        <div className="pt-4 border-t border-white/10 flex-shrink-0">
                             <p className="text-xs text-gray-500 text-center">
                                 {bots.length} bot{bots.length !== 1 ? 's' : ''} × {1 + additionalChannels.length} channel{additionalChannels.length !== 0 ? 's' : ''} = {bots.length * (1 + additionalChannels.length) * 20} msg/min max
                             </p>
